@@ -3,7 +3,6 @@ package com.dcos.platform.certapi.dto;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
-
 import java.time.Instant;
 import java.util.UUID;
 
@@ -31,8 +30,7 @@ public class CertificateResponse {
     @Schema(description = "Name of the issuing authority")
     private String issuedBy;
 
-    public CertificateResponse() {
-    }
+    public CertificateResponse() {}
 
     public static CertificateResponse from(Certificate cert) {
         CertificateResponse r = new CertificateResponse();

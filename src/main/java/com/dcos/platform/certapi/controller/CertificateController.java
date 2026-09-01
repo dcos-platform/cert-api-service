@@ -11,12 +11,11 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.List;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/certificates")
@@ -31,13 +30,16 @@ public class CertificateController {
 
     @Operation(summary = "Create a new certificate")
     @ApiResponses({
-        @ApiResponse(responseCode = "201", description = "Certificate created",
-            content = @Content(schema = @Schema(implementation = CertificateResponse.class))),
+        @ApiResponse(
+                responseCode = "201",
+                description = "Certificate created",
+                content = @Content(schema = @Schema(implementation = CertificateResponse.class))),
         @ApiResponse(responseCode = "400", description = "Invalid request payload"),
         @ApiResponse(responseCode = "403", description = "Insufficient permissions")
     })
     @PostMapping
-    public ResponseEntity<CertificateResponse> create(@Valid @RequestBody CertificateRequest request) {
+    public ResponseEntity<CertificateResponse> create(
+            @Valid @RequestBody CertificateRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
     }
 
@@ -50,8 +52,10 @@ public class CertificateController {
 
     @Operation(summary = "Retrieve a certificate by ID")
     @ApiResponses({
-        @ApiResponse(responseCode = "200", description = "Certificate found",
-            content = @Content(schema = @Schema(implementation = CertificateResponse.class))),
+        @ApiResponse(
+                responseCode = "200",
+                description = "Certificate found",
+                content = @Content(schema = @Schema(implementation = CertificateResponse.class))),
         @ApiResponse(responseCode = "404", description = "Certificate not found")
     })
     @GetMapping("/{id}")
@@ -65,7 +69,9 @@ public class CertificateController {
         @ApiResponse(responseCode = "200", description = "Certificate renewed"),
         @ApiResponse(responseCode = "400", description = "Invalid request payload"),
         @ApiResponse(responseCode = "404", description = "Certificate not found"),
-        @ApiResponse(responseCode = "409", description = "Certificate cannot be renewed in current state")
+        @ApiResponse(
+                responseCode = "409",
+                description = "Certificate cannot be renewed in current state")
     })
     @PutMapping("/{id}/renew")
     public ResponseEntity<CertificateResponse> renew(

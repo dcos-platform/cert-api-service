@@ -1,5 +1,9 @@
 package com.dcos.platform.certapi.service;
 
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.dto.CertificateRequest;
@@ -8,6 +12,11 @@ import com.dcos.platform.certapi.event.CertificateEventPublisher;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,27 +24,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
-
 @ExtendWith(MockitoExtension.class)
 class CertificateServiceTest {
 
-    @Mock
-    private CertificateRepository repository;
+    @Mock private CertificateRepository repository;
 
-    @Mock
-    private CertificateEventPublisher eventPublisher;
+    @Mock private CertificateEventPublisher eventPublisher;
 
-    @InjectMocks
-    private CertificateService service;
+    @InjectMocks private CertificateService service;
 
     private CertificateRequest request;
     private Certificate savedCert;

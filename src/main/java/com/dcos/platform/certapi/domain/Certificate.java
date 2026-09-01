@@ -31,11 +31,9 @@ public class Certificate {
     @Column(nullable = false)
     private String issuedBy;
 
-    @Version
-    private Long version;
+    @Version private Long version;
 
-    public Certificate() {
-    }
+    public Certificate() {}
 
     public UUID getId() {
         return id;

@@ -12,11 +12,10 @@ public class CertificateEvent {
     private String status;
     private Instant occurredAt;
 
-    public CertificateEvent() {
-    }
+    public CertificateEvent() {}
 
-    public CertificateEvent(String eventType, UUID certificateId, String subject,
-                            String type, String status) {
+    public CertificateEvent(
+            String eventType, UUID certificateId, String subject, String type, String status) {
         this.eventType = eventType;
         this.certificateId = certificateId;
         this.subject = subject;
