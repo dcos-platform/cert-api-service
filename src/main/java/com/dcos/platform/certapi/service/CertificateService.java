@@ -8,14 +8,13 @@ import com.dcos.platform.certapi.event.CertificateEventPublisher;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class CertificateService {
@@ -23,8 +22,8 @@ public class CertificateService {
     private final CertificateRepository repository;
     private final CertificateEventPublisher eventPublisher;
 
-    public CertificateService(CertificateRepository repository,
-                              CertificateEventPublisher eventPublisher) {
+    public CertificateService(
+            CertificateRepository repository, CertificateEventPublisher eventPublisher) {
         this.repository = repository;
         this.eventPublisher = eventPublisher;
     }
@@ -93,7 +92,6 @@ public class CertificateService {
     }
 
     private Certificate findOrThrow(UUID id) {
-        return repository.findById(id)
-                .orElseThrow(() -> new CertificateNotFoundException(id));
+        return repository.findById(id).orElseThrow(() -> new CertificateNotFoundException(id));
     }
 }

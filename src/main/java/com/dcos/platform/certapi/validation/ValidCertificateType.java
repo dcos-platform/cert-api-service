@@ -10,7 +10,8 @@ import java.lang.annotation.*;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface ValidCertificateType {
 
-    String message() default "Invalid certificate type. Allowed values: TLS, CLIENT, CA, CODE_SIGNING";
+    String message() default
+            "Invalid certificate type. Allowed values: TLS, CLIENT, CA, CODE_SIGNING";
 
     Class<?>[] groups() default {};
 

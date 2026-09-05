@@ -1,5 +1,12 @@
 package com.dcos.platform.certapi.controller;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
 import com.dcos.platform.certapi.config.SecurityConfig;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
@@ -8,6 +15,10 @@ import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.service.CertificateService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,30 +29,15 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-import java.util.List;
-import java.util.UUID;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-
 @WebMvcTest(CertificateController.class)
 @Import(SecurityConfig.class)
 class CertificateControllerTest {
 
-    @Autowired
-    private MockMvc mockMvc;
+    @Autowired private MockMvc mockMvc;
 
-    @Autowired
-    private ObjectMapper objectMapper;
+    @Autowired private ObjectMapper objectMapper;
 
-    @MockBean
-    private CertificateService service;
+    @MockBean private CertificateService service;
 
     private CertificateResponse sampleResponse;
     private CertificateRequest sampleRequest;
@@ -75,10 +71,11 @@ class CertificateControllerTest {
         UUID id = UUID.randomUUID();
         when(service.create(any(CertificateRequest.class))).thenReturn(buildResponse(id));
 
-        mockMvc.perform(post("/api/v1/certificates")
-                        .with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(sampleRequest)))
+        mockMvc.perform(
+                        post("/api/v1/certificates")
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(sampleRequest)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(id.toString()))
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
@@ -87,10 +84,11 @@ class CertificateControllerTest {
     @Test
     @WithMockUser(roles = "USER")
     void createCertificate_shouldReturn403_forUser() throws Exception {
-        mockMvc.perform(post("/api/v1/certificates")
-                        .with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(sampleRequest)))
+        mockMvc.perform(
+                        post("/api/v1/certificates")
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(sampleRequest)))
                 .andExpect(status().isForbidden());
     }
 
@@ -100,10 +98,11 @@ class CertificateControllerTest {
         CertificateRequest invalid = new CertificateRequest();
         invalid.setType("INVALID_TYPE");
 
-        mockMvc.perform(post("/api/v1/certificates")
-                        .with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(invalid)))
+        mockMvc.perform(
+                        post("/api/v1/certificates")
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(invalid)))
                 .andExpect(status().isBadRequest());
     }
 
@@ -135,8 +134,7 @@ class CertificateControllerTest {
         UUID id = UUID.randomUUID();
         when(service.getById(id)).thenThrow(new CertificateNotFoundException(id));
 
-        mockMvc.perform(get("/api/v1/certificates/{id}", id))
-                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/certificates/{id}", id)).andExpect(status().isNotFound());
     }
 
     @Test
@@ -145,10 +143,11 @@ class CertificateControllerTest {
         UUID id = UUID.randomUUID();
         when(service.renew(eq(id), any(CertificateRequest.class))).thenReturn(buildResponse(id));
 
-        mockMvc.perform(put("/api/v1/certificates/{id}/renew", id)
-                        .with(csrf())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(sampleRequest)))
+        mockMvc.perform(
+                        put("/api/v1/certificates/{id}/renew", id)
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(sampleRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id.toString()));
     }
@@ -167,8 +166,7 @@ class CertificateControllerTest {
         revokedCert.setIssuedBy("Internal CA");
         when(service.revoke(id)).thenReturn(CertificateResponse.from(revokedCert));
 
-        mockMvc.perform(patch("/api/v1/certificates/{id}/revoke", id)
-                        .with(csrf()))
+        mockMvc.perform(patch("/api/v1/certificates/{id}/revoke", id).with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REVOKED"));
     }

@@ -43,13 +43,13 @@ public class CertificateEventPublisher {
     }
 
     private void publish(String routingKey, String eventType, Certificate cert) {
-        CertificateEvent event = new CertificateEvent(
-                eventType,
-                cert.getId(),
-                cert.getSubject(),
-                cert.getType(),
-                cert.getStatus().name()
-        );
+        CertificateEvent event =
+                new CertificateEvent(
+                        eventType,
+                        cert.getId(),
+                        cert.getSubject(),
+                        cert.getType(),
+                        cert.getStatus().name());
         log.info("Publishing {} event for certificate {}", eventType, cert.getId());
         rabbitTemplate.convertAndSend(exchange, routingKey, event);
     }
