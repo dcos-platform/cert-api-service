@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 4: Container image build and publish
+
+#### Added
+
+- **Container Image Definition**: Multi-stage Dockerfile using Temurin 21 JDK for build and Temurin 21 JRE for runtime, optimizing image size and security
+- **Dependency Layer Caching**: Build stage layers ordered to maximize Docker cache efficiency — wrapper and build file resolved before source code copy, so dependency downloads do not re-run on source changes
+- **Non-root Runtime User**: Container runs as unprivileged `app` user, reducing attack surface and passing security scanning policies
+- **OCI Metadata Labels**: Image tagged with source repository URL and commit SHA for production traceability
+- **Build Context Optimization**: .dockerignore file excludes build output, version control, IDE files, and documentation to minimize build context size and upload overhead
+- **Container Registry Publishing**: GitHub Actions workflow extended with Docker login, build, and conditional push to GitHub Container Registry (ghcr.io)
+- **Pull Request Build Verification**: Image builds on pull requests without pushing, proving the Dockerfile is valid before merge
+- **Trunk Push Publishing**: Image publishes to ghcr.io on pushes to main, tagged with commit SHA and moving `latest` tag for production consumption
+- **Documentation**: README updated with local build and container run instructions, including all required environment variables
+
+#### Changed
+
+- **GitHub Actions Permissions**: Job now granted `packages: write` permission to enable container registry publishing
+- **Docker Actions**: Workflow uses maintained Docker actions (setup-buildx, login, build-push) with GitHub Actions cache for efficient builds
+- **Registry Login Gating**: Registry login only runs on trunk pushes to main, avoiding authentication overhead and token use on pull requests
+- **Third-party Action Pinning**: Docker actions pinned to immutable commit hashes instead of mutable version tags (setup-buildx-action to 8d2750c68a, login-action to c94ce9fb46, build-push-action to ca052bb54a) to prevent supply-chain attacks from compromised tags
+
 ### Story 3: Coverage and SonarQube quality gate
 
 #### Added
