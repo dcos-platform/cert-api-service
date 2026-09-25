@@ -1,0 +1,12 @@
+target/
+.git
+.gitignore
+.idea
+.vscode
+*.log
+*.md
+CHANGELOG.md
+README.md
+LICENSE
+docs/
+.DS_Store
