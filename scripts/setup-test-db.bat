@@ -1,9 +1,11 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set DB_HOST=%DB_HOST:localhost=localhost%
-set DB_PORT=%DB_PORT:5432=5432%
-set DB_USER=%DB_USER:postgres=postgres%
+if not defined DB_HOST set DB_HOST=localhost
+if not defined DB_PORT set DB_PORT=5432
+if not defined DB_USER set DB_USER=dcos
+if not defined DB_PASSWORD set DB_PASSWORD=changeme
+set PGPASSWORD=%DB_PASSWORD%
 set DB_NAME=cert_api_test
 
 echo Setting up test database...
@@ -21,17 +23,17 @@ if errorlevel 1 (
     echo.
     echo To fix this issue, ensure PostgreSQL is running. You can start it with:
     echo   - On Windows: net start postgresql-x64-15 (or use PostgreSQL services)
-    echo   - On Docker: docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:15
+    echo   - The dcos-infra stack: cd ..\dcos-infra, then docker compose up -d
     echo   - Check PostgreSQL status at Windows Services
     echo.
     exit /b 1
 )
 
 REM Create the database if it doesn't exist
-for /f %%i in ('psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -tc "SELECT 1 FROM pg_database WHERE datname = '%DB_NAME%'" 2^>nul') do set DB_EXISTS=%%i
+for /f %%i in ('psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '%DB_NAME%'" 2^>nul') do set DB_EXISTS=%%i
 
 if not defined DB_EXISTS (
-    psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -c "CREATE DATABASE %DB_NAME%;"
+    psql -h %DB_HOST% -p %DB_PORT% -U %DB_USER% -d postgres -c "CREATE DATABASE %DB_NAME%;"
 )
 
 echo Test database '%DB_NAME%' is ready.
@@ -41,7 +43,7 @@ echo   URL: jdbc:postgresql://%DB_HOST%:%DB_PORT%/%DB_NAME%
 echo   User: %DB_USER%
 echo.
 echo To run tests with this database:
-echo   set DB_HOST=%DB_HOST% DB_PORT=%DB_PORT% DB_USER=%DB_USER%
-echo   mvn clean test
+echo   set DB_HOST, DB_PORT, DB_USER and DB_PASSWORD as needed
+echo   mvnw.cmd clean verify
 
 endlocal

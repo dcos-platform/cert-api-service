@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
@@ -47,7 +48,7 @@ class CertificateServiceTest {
         savedCert = new Certificate();
         savedCert.setId(UUID.randomUUID());
         savedCert.setSubject(request.getSubject());
-        savedCert.setType("TLS");
+        savedCert.setType(CertificateType.TLS);
         savedCert.setStatus(CertificateStatus.ACTIVE);
         savedCert.setIssuedAt(Instant.now());
         savedCert.setExpiresAt(request.getExpiresAt());

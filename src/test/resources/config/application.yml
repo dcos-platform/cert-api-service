@@ -1,0 +1,14 @@
+# Test overrides. Spring Boot loads classpath:/config/application.yml in addition to the main
+# classpath:/application.yml and gives it precedence, so only test-specific values live here.
+#
+# Every test that touches the database uses the dedicated cert_api_test database on an external
+# PostgreSQL instance, never the application's shared database. Create it with
+# scripts/setup-test-db.sh (or scripts\setup-test-db.bat on Windows).
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/cert_api_test
+    username: ${DB_USER:dcos}
+    password: ${DB_PASSWORD:changeme}
+  flyway:
+    # Allow clean operations in tests so we can reset the schema between test runs.
+    cleanDisabled: false

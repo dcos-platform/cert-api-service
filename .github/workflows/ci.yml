@@ -17,6 +17,23 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # Integration tests run against real PostgreSQL. Name, user, and password match the test
+    # configuration's defaults (src/test/resources/config/application.yml); the health check
+    # makes the job wait for readiness before any step runs.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cert_api_test
+          POSTGRES_USER: dcos
+          POSTGRES_PASSWORD: changeme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dcos -d cert_api_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:

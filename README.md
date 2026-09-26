@@ -6,29 +6,16 @@ Spring Boot API service for creating, renewing, revoking, and retrieving certifi
 
 ### PostgreSQL Database
 
-This service requires PostgreSQL for integration tests. Before building or running tests, ensure PostgreSQL is available and running.
+The service stores its data in the shared `dcos` database provided by the [dcos-infra](../dcos-infra) stack, under its own schema, `dcos_certificates`. Flyway creates and migrates that schema on startup, so no manual database setup is needed to run the service. This deliberately differs from the other DCOS services, which each use their own database: cert-api-service needs no `CREATE DATABASE` step and starts against a fresh dcos-infra stack.
 
-**Setting up the test database:**
-
-```bash
-# macOS (Homebrew)
-brew services start postgresql@15
-
-# Linux (systemd)
-sudo systemctl start postgresql
-
-# Docker
-docker run -d -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:15
-```
-
-**Create the test database:**
+The integration tests run against real PostgreSQL, never an in-memory database, using a dedicated `cert_api_test` database. Before building or running tests, make sure PostgreSQL is running (for example `docker compose up -d` in `../dcos-infra`), then create the test database:
 
 ```bash
 ./scripts/setup-test-db.sh          # Linux/macOS
-./scripts/setup-test-db.bat         # Windows
+scripts\setup-test-db.bat           # Windows
 ```
 
-The setup script will verify the PostgreSQL connection and create the `cert_api_test` database if it doesn't exist. If the connection fails, the script will provide instructions on how to start PostgreSQL.
+The setup script checks the PostgreSQL connection and creates `cert_api_test` if it doesn't exist. Its defaults match dcos-infra (`localhost:5432`, user `dcos`); override them with `DB_HOST`, `DB_PORT`, `DB_USER`, and `DB_PASSWORD`. The tests read the same variables. If the test database is unreachable, the tests stop with a "TEST DATABASE UNAVAILABLE" message that names this script.
 
 ## Building and Running the Container
 
@@ -48,18 +35,21 @@ The service requires PostgreSQL and RabbitMQ to operate. Start those services fi
 
 ```bash
 docker run -p 8080:8080 \
-  -e DB_URL=jdbc:postgresql://host.docker.internal:5432/certdb \
-  -e DB_USERNAME=certuser \
-  -e DB_PASSWORD=certpassword \
+  -e POSTGRES_HOST=host.docker.internal \
+  -e POSTGRES_PASSWORD=<database password> \
   -e SPRING_RABBITMQ_HOST=host.docker.internal \
   cert-api-service
 ```
 
+If the dcos-infra Adminer container already holds port 8080 on the host, map a different host port (for example `-p 8081:8080`).
+
 **Environment Variables:**
 
-- `DB_URL`: PostgreSQL connection string (default: `jdbc:postgresql://localhost:5432/certdb`)
-- `DB_USERNAME`: PostgreSQL username (default: `certuser`)
-- `DB_PASSWORD`: PostgreSQL password (default: `certpassword`)
+- `POSTGRES_HOST`: PostgreSQL host (default: `localhost`)
+- `POSTGRES_PORT`: PostgreSQL port (default: `5432`)
+- `POSTGRES_DB`: Database name (default: `dcos`)
+- `POSTGRES_USER`: PostgreSQL username (default: `dcos`)
+- `POSTGRES_PASSWORD`: PostgreSQL password (default: dcos-infra's local default)
 - `SPRING_RABBITMQ_HOST`: RabbitMQ host (default: `localhost`)
 - `SPRING_RABBITMQ_PORT`: RabbitMQ port (default: `5672`)
 - `SPRING_RABBITMQ_USERNAME`: RabbitMQ username (default: `guest`)

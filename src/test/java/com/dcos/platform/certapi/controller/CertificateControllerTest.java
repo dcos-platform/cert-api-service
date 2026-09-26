@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.dcos.platform.certapi.config.SecurityConfig;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
@@ -57,7 +58,7 @@ class CertificateControllerTest {
         Certificate cert = new Certificate();
         cert.setId(id);
         cert.setSubject("CN=test.example.com");
-        cert.setType("TLS");
+        cert.setType(CertificateType.TLS);
         cert.setStatus(CertificateStatus.ACTIVE);
         cert.setIssuedAt(Instant.now());
         cert.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
@@ -159,7 +160,7 @@ class CertificateControllerTest {
         Certificate revokedCert = new Certificate();
         revokedCert.setId(id);
         revokedCert.setSubject("CN=test.example.com");
-        revokedCert.setType("TLS");
+        revokedCert.setType(CertificateType.TLS);
         revokedCert.setStatus(CertificateStatus.REVOKED);
         revokedCert.setIssuedAt(Instant.now());
         revokedCert.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));

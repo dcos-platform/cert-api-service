@@ -36,7 +36,7 @@ public class CertificateResponse {
         CertificateResponse r = new CertificateResponse();
         r.id = cert.getId();
         r.subject = cert.getSubject();
-        r.type = cert.getType();
+        r.type = cert.getType().name();
         r.status = cert.getStatus();
         r.issuedAt = cert.getIssuedAt();
         r.expiresAt = cert.getExpiresAt();
