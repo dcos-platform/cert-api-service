@@ -1,0 +1,4 @@
+# Shell scripts run on Linux (CI runners, containers) and fail with carriage returns,
+# so they are always checked out with LF endings regardless of platform settings.
+*.sh text eol=lf
+mvnw text eol=lf

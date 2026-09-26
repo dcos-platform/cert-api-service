@@ -1,15 +1,22 @@
 spring:
+  # Shared database provided by dcos-infra; variable names and local defaults match its .env.example.
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/certdb}
-    username: ${DB_USERNAME:certuser}
-    password: ${DB_PASSWORD:certpassword}
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:dcos}
+    username: ${POSTGRES_USER:dcos}
+    password: ${POSTGRES_PASSWORD:changeme}
     driver-class-name: org.postgresql.Driver
+  flyway:
+    schemas: dcos_certificates
+    default-schema: dcos_certificates
   jpa:
     hibernate:
-      ddl-auto: update
+      # Refuse to start if any entity disagrees with the migrated schema.
+      ddl-auto: validate
+    open-in-view: false
     show-sql: false
     properties:
       hibernate:
+        default_schema: dcos_certificates
         format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
   rabbitmq:

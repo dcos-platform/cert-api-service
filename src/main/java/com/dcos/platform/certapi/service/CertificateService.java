@@ -2,6 +2,7 @@ package com.dcos.platform.certapi.service;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
@@ -33,7 +34,7 @@ public class CertificateService {
     public CertificateResponse create(CertificateRequest request) {
         Certificate cert = new Certificate();
         cert.setSubject(request.getSubject());
-        cert.setType(request.getType().toUpperCase());
+        cert.setType(CertificateType.valueOf(request.getType().toUpperCase()));
         cert.setStatus(CertificateStatus.ACTIVE);
         cert.setIssuedAt(Instant.now());
         cert.setExpiresAt(request.getExpiresAt());
@@ -66,7 +67,7 @@ public class CertificateService {
             throw new CertificateStateException(id, "Cannot renew a revoked certificate");
         }
         cert.setSubject(request.getSubject());
-        cert.setType(request.getType().toUpperCase());
+        cert.setType(CertificateType.valueOf(request.getType().toUpperCase()));
         cert.setIssuedAt(Instant.now());
         cert.setExpiresAt(request.getExpiresAt());
         cert.setIssuedBy(request.getIssuedBy());

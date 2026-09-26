@@ -48,7 +48,7 @@ public class CertificateEventPublisher {
                         eventType,
                         cert.getId(),
                         cert.getSubject(),
-                        cert.getType(),
+                        cert.getType().name(),
                         cert.getStatus().name());
         log.info("Publishing {} event for certificate {}", eventType, cert.getId());
         rabbitTemplate.convertAndSend(exchange, routingKey, event);

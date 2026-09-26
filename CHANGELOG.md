@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 5: Persistent schema and expanded certificate model
+
+#### Added
+
+- **Migration-managed schema**: Flyway now owns the database schema. The first migration creates the `dcos_certificates` schema and the `certificates` table, with check constraints on type, status, orchestration status, revocation reason, validity dates, and renewal window, plus a unique serial number and indexes for common lookups.
+- **Seed data**: A second migration loads five fictional certificates with fixed identifiers (`11111111-…` to `55555555-…`), so tests and demos can reference them reliably. The insert is safe to re-run.
+- **Full certificate model**: The certificate entity now carries serial number, common name, orchestration status, renewal window, revocation detail, requesting principal, correlation id, last error, renewal count, and creation/update timestamps. New enumerations: `CertificateType`, `OrchestrationStatus`, `RevocationReason`.
+- **Real-database tests**: Integration tests run against real PostgreSQL. A migration test rebuilds the schema from empty and checks the seed data. A context test boots the whole application with schema validation on. Repository tests read real data.
+- **Shared test fixture**: `CertificateFixtures` builds valid certificates in the active, expired, revoked, and renewal-window states for all tests to reuse.
+- **Clear failure when the test database is down**: Instead of a raw connection error, tests stop with a "TEST DATABASE UNAVAILABLE" message that names the setup script to run.
+- **Pipeline database**: The CI build job now starts a health-checked PostgreSQL 16 service with the test database, so database tests run in the pipeline as they do locally.
+- **Coverage accuracy**: A root `lombok.config` marks Lombok-generated accessors so JaCoCo excludes them. Coverage now reflects hand-written code only.
+- **Line endings**: A root `.gitattributes` forces LF endings for shell scripts and `mvnw`, which previously failed on Linux when checked out with Windows line endings.
+
+#### Changed
+
+- **Database connection**: The service now targets the shared `dcos` database from dcos-infra, configured through `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD`. The old `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` settings pointed at a database and credentials that existed nowhere, and they are gone.
+- **Schema validation instead of generation**: Hibernate now validates the entity mapping against the migrated schema (`ddl-auto: validate`) instead of altering the schema. The application refuses to start if they disagree.
+- **Open session in view disabled**.
+- **Test database setup scripts**: Defaults now match the dcos-infra stack and the test configuration (user `dcos`, password taken from `DB_PASSWORD`). The Windows script's default handling was also corrected.
+
+#### Removed
+
+- **H2 in-memory database**: Removed from the build. The migrations use PostgreSQL column types and index forms that H2 does not support, so tests run only against real PostgreSQL.
+
+#### Design decision: deferred constraints
+
+The first migration makes three columns nullable (serial_number, common_name, requested_by) and omits the revoked-consistency check, deferring their enforcement to the stories that populate them:
+- Story 6 (certificate creation) will add NOT NULL to serial_number, common_name, requested_by and the unique constraint on serial_number.
+- Story 8 (lifecycle transitions) will add the check constraint that ties REVOKED status to revoked_at presence.
+
+This boundary allows the current service code to create and revoke certificates immediately, with both operations succeeding against a real database, while the schema evolves alongside the feature implementations that complete them.
+
 ### Story 4: Container image build and publish
 
 #### Added
