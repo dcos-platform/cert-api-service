@@ -10,21 +10,23 @@ currently exist. It does not contain rules or constraints; those live in claude.
 
 ## Current Implementation State
 
-Stories 1–5 are complete. Story 5 (Persistent schema and expanded certificate model) replaced Hibernate-managed schema generation with Flyway migrations and a full certificate model. The service currently has:
-- A single REST controller exposing five endpoints for certificate lifecycle operations (behaviour unchanged by Story 5)
-- A Flyway-managed PostgreSQL schema, `dcos_certificates`, inside the shared `dcos` database provided by dcos-infra. Hibernate runs with `ddl-auto: validate`, so the application refuses to start if any entity disagrees with the migrated schema
-- A full `Certificate` entity (serial number, common name, type, status, orchestration status, validity, renewal window, revocation detail, requesting principal, correlation id, last error, renewal count, audit timestamps, optimistic-lock version)
-- Enumerations: CertificateStatus (ACTIVE, EXPIRED, REVOKED; unchanged), CertificateType (TLS, CLIENT, CA, CODE_SIGNING), OrchestrationStatus (PENDING, PROCESSING, COMPLETED, FAILED), RevocationReason (UNSPECIFIED, KEY_COMPROMISE, CA_COMPROMISE, AFFILIATION_CHANGED, SUPERSEDED, CESSATION_OF_OPERATION)
-- A service layer implementing business logic with state validation
-- Role-based access control (USER and ADMIN roles) at the method level
-- Request and response data transfer objects with request validation. The request `type` remains a string validated against the allowed values; the service converts it to `CertificateType`
-- A repository for data persistence
-- An event publisher that broadcasts lifecycle events to RabbitMQ
-- Global exception handling with RFC 7807 Problem Detail responses
-- OpenAPI 3.0 documentation via springdoc-openapi
-- Unit and web-slice tests, plus integration tests against a real PostgreSQL test database
+Stories 1–6 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. The service now has:
+- A REST controller exposing endpoints for certificate lifecycle operations. POST create returns 201 with Location header; renew and revoke are POST
+- A Flyway-managed PostgreSQL schema with three migrations. V3 (Story 6) enforces NOT NULL on serial_number, common_name, requested_by and adds a partial unique index on (subject, type) WHERE status = 'ACTIVE'
+- A full `Certificate` entity with all fields non-nullable where required
+- Enumerations: CertificateStatus (ACTIVE, EXPIRED, REVOKED), CertificateType (TLS, CLIENT, CA, CODE_SIGNING), OrchestrationStatus (PENDING, PROCESSING, COMPLETED, FAILED), RevocationReason (UNSPECIFIED, KEY_COMPROMISE, CA_COMPROMISE, AFFILIATION_CHANGED, SUPERSEDED, CESSATION_OF_OPERATION)
+- Service layer implementing certificate creation with serial number generation (format DCOS-YYYY-<12hex>, collision retry), common name derivation from subject or request, and principal capture. `CertificateStateMachine` validates state transitions as pure logic
+- Role-based access control (USER and ADMIN) at method level
+- Request DTOs: `CertificateCreateRequest` (record), `CertificateRequest` (POJO for renew/revoke)
+- Response DTOs: `CertificateResponse` (POJO, used by all endpoints)
+- Error codes enumeration and extended global exception handler returning 409 Conflict on duplicate or constraint violations
+- Repository with serial number collision checking
+- Event publisher for lifecycle events (not yet wired to outbox; Story 9)
+- Global exception handling with RFC 7807 Problem Detail responses including error codes
+- OpenAPI 3.0 documentation
+- Comprehensive unit tests for serial generation, common name extraction, and state machine; service tests for create with principal and serial capture; controller slice tests including Location header and authorization
 
-The schema allows `serial_number`, `common_name`, and `requested_by` to be NULL initially (Story 6 will add NOT NULL and enforce the serial uniqueness). The revocation consistency check is also deferred to Story 8. This deliberate boundary lets create and revoke work immediately against a real database, and the schema constraints tighten as the implementation stories are delivered.
+The schema enforces NOT NULL on `serial_number`, `common_name`, and `requested_by` (added in Story 6). A partial unique index on `(subject, type) WHERE status = 'ACTIVE'` prevents two active certificates for the same subject and type. The revocation consistency check is deferred to Story 8.
 
 The build is reproducible: Maven 3.9.16 is pinned in the wrapper, so only a JDK is needed. Spotless with Google Java Format (AOSP style) runs in the verify phase. Lombok is applied to the `Certificate` entity using only `@Getter`, `@Setter`, and `@NoArgsConstructor`, never `@Data` or `@Builder` on entities. A root `lombok.config` enables `lombok.addLombokGeneratedAnnotation`, so JaCoCo excludes generated accessors from coverage. A root `.gitattributes` forces LF line endings for `*.sh` and `mvnw`.
 
@@ -69,7 +71,7 @@ src/
   - RabbitMqConfig: Topic exchange, queues, bindings, and message converter setup
   - OpenApiConfig: OpenAPI 3.0 schema with basic authentication scheme
 - **controller/**: REST API layer
-  - CertificateController: Five endpoints (POST create, GET list, GET by id, PUT renew, PATCH revoke) with OpenAPI annotations
+  - CertificateController: Five endpoints (POST create, GET list, GET by id, POST renew, POST revoke) with OpenAPI annotations
 - **domain/**: Persistent entity and enumerations
   - Certificate: JPA entity mapped to `certificates`. Uses Lombok @Getter/@Setter/@NoArgsConstructor, with no equals/hashCode/toString. Has @Version optimistic locking; Hibernate sets the creation and update timestamps
   - CertificateStatus: ACTIVE, EXPIRED, REVOKED
@@ -126,12 +128,10 @@ src/
 ## What Does Not Yet Exist
 
 The following will arrive in future stories:
-- **Serial number generation and full create semantics**: create does not yet populate serial_number, common_name, or requested_by (Story 6)
-- **Partial unique index on active (subject, type)**: Story 6
-- **Search and pagination**: getAll() returns all certificates (Story 7)
-- **Lifecycle state machine**: renew and revoke semantics per the plan, including revocation detail (Story 8)
-- **Transactional outbox**: events are still published inside the transaction, with no guaranteed delivery. The outbox table arrives with Story 9
-- **Completion consumer**: nothing listens for orchestrator completions yet. The processed-completions table arrives with Story 10
+- **Search and pagination**: getAll() returns all certificates; paginated listing and filtering arrives with Story 7
+- **Expiry sweep**: A scheduled task that transitions ACTIVE → EXPIRED when now() > expires_at, enqueuing CERTIFICATE_EXPIRED events (Story 8)
+- **Transactional outbox**: Events are published inside the service transaction with no guaranteed delivery yet. The outbox table and OutboxRelay service arrive with Story 9
+- **Completion consumer**: Nothing listens for orchestrator completions yet. The processed-completions table and CompletionListener arrive with Story 10
 
 ## Dependencies and Tooling
 
@@ -154,7 +154,7 @@ The following will arrive in future stories:
 
 Work proceeds as a sequence of numbered stories. Each story branches from main, delivers its own tests, and is merged before the next story begins. Each story updates this document to reflect the new state of the repository.
 
-Stories 1–5 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, and persistent schema and certificate model. The remaining stories are certificate creation (6), certificate search and pagination (7), certificate lifecycle transitions (8), lifecycle event publication (9), and completion consumption and API hardening (10).
+Stories 1–6 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, and certificate creation. The remaining stories are certificate search and pagination (7), certificate lifecycle transitions (8), lifecycle event publication (9), and completion consumption and API hardening (10).
 
 ## Intended Use of This Document
 

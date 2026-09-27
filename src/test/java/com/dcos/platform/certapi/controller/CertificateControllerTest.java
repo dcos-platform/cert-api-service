@@ -11,6 +11,7 @@ import com.dcos.platform.certapi.config.SecurityConfig;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
+import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
@@ -40,44 +41,59 @@ class CertificateControllerTest {
 
     @MockBean private CertificateService service;
 
-    private CertificateResponse sampleResponse;
-    private CertificateRequest sampleRequest;
+    private CertificateCreateRequest createRequest;
+    private CertificateRequest renewRequest;
 
     @BeforeEach
     void setUp() {
-        sampleRequest = new CertificateRequest();
-        sampleRequest.setSubject("CN=test.example.com");
-        sampleRequest.setType("TLS");
-        sampleRequest.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
-        sampleRequest.setIssuedBy("Internal CA");
+        Instant tomorrow = Instant.now().plus(365, ChronoUnit.DAYS);
+        createRequest =
+                new CertificateCreateRequest(
+                        "CN=test.example.com,OU=test,O=DCOS",
+                        "test.example.com",
+                        "TLS",
+                        "Internal CA",
+                        tomorrow,
+                        30,
+                        null);
 
-        sampleResponse = new CertificateResponse();
+        renewRequest = new CertificateRequest();
+        renewRequest.setSubject("CN=test.example.com");
+        renewRequest.setType("TLS");
+        renewRequest.setExpiresAt(tomorrow);
+        renewRequest.setIssuedBy("Internal CA");
     }
 
     private CertificateResponse buildResponse(UUID id) {
         Certificate cert = new Certificate();
         cert.setId(id);
-        cert.setSubject("CN=test.example.com");
+        cert.setSerialNumber("DCOS-2026-ABCDEF123456");
+        cert.setSubject("CN=test.example.com,OU=test,O=DCOS");
+        cert.setCommonName("test.example.com");
         cert.setType(CertificateType.TLS);
         cert.setStatus(CertificateStatus.ACTIVE);
         cert.setIssuedAt(Instant.now());
         cert.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
         cert.setIssuedBy("Internal CA");
+        cert.setRequestedBy("admin");
         return CertificateResponse.from(cert);
     }
 
     @Test
-    @WithMockUser(roles = "ADMIN")
-    void createCertificate_shouldReturn201() throws Exception {
+    @WithMockUser(roles = "ADMIN", username = "admin")
+    void createCertificate_shouldReturn201WithLocationHeader() throws Exception {
         UUID id = UUID.randomUUID();
-        when(service.create(any(CertificateRequest.class))).thenReturn(buildResponse(id));
+        when(service.create(any(CertificateCreateRequest.class), eq("admin")))
+                .thenReturn(buildResponse(id));
 
         mockMvc.perform(
                         post("/api/v1/certificates")
                                 .with(csrf())
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(sampleRequest)))
+                                .content(objectMapper.writeValueAsString(createRequest)))
                 .andExpect(status().isCreated())
+                .andExpect(header().exists("Location"))
+                .andExpect(header().string("Location", "/api/v1/certificates/" + id))
                 .andExpect(jsonPath("$.id").value(id.toString()))
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
     }
@@ -89,15 +105,32 @@ class CertificateControllerTest {
                         post("/api/v1/certificates")
                                 .with(csrf())
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(sampleRequest)))
+                                .content(objectMapper.writeValueAsString(createRequest)))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createCertificate_shouldReturn401_whenNotAuthenticated() throws Exception {
+        mockMvc.perform(
+                        post("/api/v1/certificates")
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(createRequest)))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     @WithMockUser(roles = "ADMIN")
     void createCertificate_shouldReturn400_forInvalidRequest() throws Exception {
-        CertificateRequest invalid = new CertificateRequest();
-        invalid.setType("INVALID_TYPE");
+        CertificateCreateRequest invalid =
+                new CertificateCreateRequest(
+                        "",
+                        null,
+                        "INVALID_TYPE",
+                        "",
+                        Instant.now().minus(1, ChronoUnit.DAYS),
+                        null,
+                        null);
 
         mockMvc.perform(
                         post("/api/v1/certificates")
@@ -145,10 +178,10 @@ class CertificateControllerTest {
         when(service.renew(eq(id), any(CertificateRequest.class))).thenReturn(buildResponse(id));
 
         mockMvc.perform(
-                        put("/api/v1/certificates/{id}/renew", id)
+                        post("/api/v1/certificates/{id}/renew", id)
                                 .with(csrf())
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(sampleRequest)))
+                                .content(objectMapper.writeValueAsString(renewRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id.toString()));
     }
@@ -159,15 +192,18 @@ class CertificateControllerTest {
         UUID id = UUID.randomUUID();
         Certificate revokedCert = new Certificate();
         revokedCert.setId(id);
-        revokedCert.setSubject("CN=test.example.com");
+        revokedCert.setSerialNumber("DCOS-2026-ABCDEF123456");
+        revokedCert.setSubject("CN=test.example.com,OU=test,O=DCOS");
+        revokedCert.setCommonName("test.example.com");
         revokedCert.setType(CertificateType.TLS);
         revokedCert.setStatus(CertificateStatus.REVOKED);
         revokedCert.setIssuedAt(Instant.now());
         revokedCert.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
         revokedCert.setIssuedBy("Internal CA");
+        revokedCert.setRequestedBy("admin");
         when(service.revoke(id)).thenReturn(CertificateResponse.from(revokedCert));
 
-        mockMvc.perform(patch("/api/v1/certificates/{id}/revoke", id).with(csrf()))
+        mockMvc.perform(post("/api/v1/certificates/{id}/revoke", id).with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REVOKED"));
     }

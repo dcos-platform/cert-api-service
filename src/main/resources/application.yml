@@ -20,10 +20,12 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: guest
-    password: guest
+    # Shared broker provided by dcos-infra; variable names and defaults match its .env.example.
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:dcos}
+    password: ${RABBITMQ_PASSWORD:changeme}
+    virtual-host: ${RABBITMQ_VHOST:/}
 
 cert-api:
   rabbitmq:
