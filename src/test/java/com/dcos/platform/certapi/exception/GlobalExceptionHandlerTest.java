@@ -19,6 +19,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
+import org.springframework.validation.MapBindingResult;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
@@ -543,8 +544,7 @@ class GlobalExceptionHandlerTest {
 
     private MethodArgumentNotValidException createValidationExceptionWithMultipleErrors(
             Map<String, String> errors) {
-        BindingResult bindingResult =
-                new org.springframework.validation.MapBindingResult(Map.of(), "testObject");
+        BindingResult bindingResult = new MapBindingResult(Map.of(), "testObject");
         errors.forEach(
                 (field, msg) -> bindingResult.addError(new FieldError("testObject", field, msg)));
         return new MethodArgumentNotValidException(null, bindingResult);

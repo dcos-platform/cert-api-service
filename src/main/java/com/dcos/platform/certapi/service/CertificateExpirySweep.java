@@ -2,6 +2,8 @@ package com.dcos.platform.certapi.service;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.event.EventType;
+import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import java.time.Instant;
 import java.util.List;
@@ -25,9 +27,12 @@ public class CertificateExpirySweep {
     private static final int BATCH_SIZE = 100;
 
     private final CertificateRepository repository;
+    private final OutboxEnqueueService outboxEnqueueService;
 
-    public CertificateExpirySweep(CertificateRepository repository) {
+    public CertificateExpirySweep(
+            CertificateRepository repository, OutboxEnqueueService outboxEnqueueService) {
         this.repository = repository;
+        this.outboxEnqueueService = outboxEnqueueService;
     }
 
     @Scheduled(fixedDelayString = "${cert-api.expiry-sweep-interval:300000}")
@@ -49,7 +54,8 @@ public class CertificateExpirySweep {
             } else {
                 for (Certificate cert : activeAndExpired) {
                     cert.setStatus(CertificateStatus.EXPIRED);
-                    repository.save(cert);
+                    Certificate saved = repository.save(cert);
+                    outboxEnqueueService.enqueue(saved, EventType.EXPIRED);
                     totalProcessed++;
                 }
             }

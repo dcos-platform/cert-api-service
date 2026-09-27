@@ -2,6 +2,7 @@ package com.dcos.platform.certapi.service;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.dcos.platform.certapi.domain.Certificate;
@@ -13,10 +14,12 @@ import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.dto.RenewalRequest;
 import com.dcos.platform.certapi.dto.RevocationRequest;
-import com.dcos.platform.certapi.event.CertificateEventPublisher;
+import com.dcos.platform.certapi.event.EventType;
+import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
+import com.dcos.platform.certapi.repository.OutboxRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -35,7 +38,9 @@ class CertificateServiceTest {
 
     @Mock private CertificateRepository repository;
 
-    @Mock private CertificateEventPublisher eventPublisher;
+    @Mock private OutboxEnqueueService outboxEnqueueService;
+
+    @Mock private OutboxRepository outboxRepository;
 
     @Mock private SerialNumberGenerator serialGenerator;
 
@@ -98,9 +103,8 @@ class CertificateServiceTest {
         assertThat(response.status()).isEqualTo(CertificateStatus.ACTIVE);
 
         // Verify that the saved certificate had serial and principal populated
-        var savedArg = argumentCaptor();
         verify(repository).save(any(Certificate.class));
-        verify(eventPublisher).publishCreated(savedCert);
+        verify(outboxEnqueueService).enqueue(savedCert, EventType.CREATED);
     }
 
     @Test
@@ -203,7 +207,7 @@ class CertificateServiceTest {
         assertThat(saved.getSubject()).isEqualTo(savedCert.getSubject());
         assertThat(saved.getType()).isEqualTo(savedCert.getType());
         assertThat(saved.getIssuedBy()).isEqualTo(savedCert.getIssuedBy());
-        verify(eventPublisher).publishRenewed(any(Certificate.class));
+        verify(outboxEnqueueService).enqueue(any(Certificate.class), eq(EventType.RENEWED));
     }
 
     @Test
@@ -254,7 +258,7 @@ class CertificateServiceTest {
         renewalRequest.setExpiresAt(newExpiry);
         service.renew(savedCert.getId(), renewalRequest);
 
-        verify(eventPublisher).publishRenewed(any(Certificate.class));
+        verify(outboxEnqueueService).enqueue(any(Certificate.class), eq(EventType.RENEWED));
     }
 
     @Test
@@ -290,7 +294,7 @@ class CertificateServiceTest {
 
         service.revoke(savedCert.getId(), revocationRequest);
 
-        verify(eventPublisher).publishRevoked(any(Certificate.class));
+        verify(outboxEnqueueService).enqueue(any(Certificate.class), eq(EventType.REVOKED));
     }
 
     private org.mockito.ArgumentCaptor<Certificate> argumentCaptor() {

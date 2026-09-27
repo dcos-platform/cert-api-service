@@ -6,14 +6,17 @@ import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.OutboxEventResponse;
 import com.dcos.platform.certapi.dto.PageResponse;
 import com.dcos.platform.certapi.dto.RenewalRequest;
 import com.dcos.platform.certapi.dto.RevocationRequest;
-import com.dcos.platform.certapi.event.CertificateEventPublisher;
+import com.dcos.platform.certapi.event.EventType;
+import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.repository.CertificateSpecifications;
+import com.dcos.platform.certapi.repository.OutboxRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -37,15 +40,18 @@ public class CertificateService {
     private static final int SERIAL_GENERATION_MAX_RETRIES = 10;
 
     private final CertificateRepository repository;
-    private final CertificateEventPublisher eventPublisher;
+    private final OutboxEnqueueService outboxEnqueueService;
+    private final OutboxRepository outboxRepository;
     private final SerialNumberGenerator serialGenerator;
 
     public CertificateService(
             CertificateRepository repository,
-            CertificateEventPublisher eventPublisher,
+            OutboxEnqueueService outboxEnqueueService,
+            OutboxRepository outboxRepository,
             SerialNumberGenerator serialGenerator) {
         this.repository = repository;
-        this.eventPublisher = eventPublisher;
+        this.outboxEnqueueService = outboxEnqueueService;
+        this.outboxRepository = outboxRepository;
         this.serialGenerator = serialGenerator;
     }
 
@@ -84,7 +90,7 @@ public class CertificateService {
         cert.setSerialNumber(generateSerialWithRetry());
 
         Certificate saved = repository.save(cert);
-        eventPublisher.publishCreated(saved);
+        outboxEnqueueService.enqueue(saved, EventType.CREATED);
         return CertificateResponse.from(saved);
     }
 
@@ -219,7 +225,7 @@ public class CertificateService {
         cert.setLastError(null);
 
         Certificate saved = repository.save(cert);
-        eventPublisher.publishRenewed(saved);
+        outboxEnqueueService.enqueue(saved, EventType.RENEWED);
         return CertificateResponse.from(saved);
     }
 
@@ -239,8 +245,49 @@ public class CertificateService {
         cert.setRevocationComment(request.getComment());
 
         Certificate saved = repository.save(cert);
-        eventPublisher.publishRevoked(saved);
+        outboxEnqueueService.enqueue(saved, EventType.REVOKED);
         return CertificateResponse.from(saved);
+    }
+
+    /**
+     * Retrieves the event history for a certificate, paged and ordered by creation time descending
+     * (most recent first).
+     *
+     * @param id the certificate id
+     * @param page zero-indexed page number
+     * @param size page size
+     * @return a PageResponse containing the event history
+     * @throws CertificateNotFoundException if the certificate does not exist
+     */
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @Transactional(readOnly = true)
+    public PageResponse<OutboxEventResponse> getEventHistory(UUID id, int page, int size) {
+        findOrThrow(id);
+
+        PageRequest pageRequest = PageRequest.of(page, size);
+        var result = outboxRepository.findByAggregateIdOrderByCreatedAtDesc(id, pageRequest);
+
+        List<OutboxEventResponse> content =
+                result.getContent().stream()
+                        .map(
+                                row ->
+                                        new OutboxEventResponse(
+                                                row.getEventId(),
+                                                row.getEventType(),
+                                                row.getState().name(),
+                                                row.getAttemptCount(),
+                                                row.getCreatedAt(),
+                                                row.getSentAt()))
+                        .collect(Collectors.toList());
+
+        return new PageResponse<>(
+                content,
+                page,
+                size,
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.isFirst(),
+                result.isLast());
     }
 
     private Certificate findOrThrow(UUID id) {

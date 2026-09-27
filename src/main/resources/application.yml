@@ -29,12 +29,23 @@ spring:
 
 cert-api:
   expiry-sweep-interval: 300000
+  outbox:
+    relay-interval: 5000
+    relay-batch-size: 10
+    relay-max-attempts: 3
   rabbitmq:
-    exchange: cert.events
+    exchange: ${RABBITMQ_EXCHANGE:cert.events}
+    dlx: ${RABBITMQ_DLX:cert.events.dlx}
+    dlq: ${RABBITMQ_DLQ:cert.events.dlq}
+    orchestrator-queue: ${RABBITMQ_ORCHESTRATOR_QUEUE:certificate.lifecycle.events}
+    admin-queue: ${RABBITMQ_ADMIN_QUEUE:cert.lifecycle.events}
+    binding-pattern: ${RABBITMQ_BINDING_PATTERN:cert.#}
+    dlq-pattern: ${RABBITMQ_DLQ_PATTERN:#}
     routing-key:
       created: cert.created
       renewed: cert.renewed
       revoked: cert.revoked
+      expired: cert.expired
 
 springdoc:
   api-docs:

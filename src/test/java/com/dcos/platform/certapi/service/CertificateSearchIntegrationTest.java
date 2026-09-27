@@ -36,7 +36,7 @@ class CertificateSearchIntegrationTest {
 
     @Autowired private CertificateRepository repository;
 
-    @MockBean private com.dcos.platform.certapi.event.CertificateEventPublisher eventPublisher;
+    @MockBean private com.dcos.platform.certapi.event.OutboxEnqueueService outboxEnqueueService;
 
     private static final String PRINCIPAL = "search-test-admin";
     private static final String ISSUER = "Search Test Authority";

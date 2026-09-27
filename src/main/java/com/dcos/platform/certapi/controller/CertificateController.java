@@ -5,6 +5,7 @@ import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.OutboxEventResponse;
 import com.dcos.platform.certapi.dto.PageResponse;
 import com.dcos.platform.certapi.dto.RenewalRequest;
 import com.dcos.platform.certapi.dto.RevocationRequest;
@@ -227,6 +228,32 @@ public class CertificateController {
             @Parameter(description = "Certificate UUID") @PathVariable UUID id,
             @Valid @RequestBody RevocationRequest request) {
         return ResponseEntity.ok(service.revoke(id, request));
+    }
+
+    @Operation(summary = "Get event history for a certificate")
+    @ApiResponses({
+        @ApiResponse(
+                responseCode = "200",
+                description = "Paginated list of events",
+                content = @Content(schema = @Schema(implementation = PageResponse.class))),
+        @ApiResponse(responseCode = "401", description = "Authentication required"),
+        @ApiResponse(responseCode = "403", description = "Insufficient permissions"),
+        @ApiResponse(responseCode = "404", description = "Certificate not found")
+    })
+    @GetMapping("/{id}/events")
+    public ResponseEntity<PageResponse<OutboxEventResponse>> getEventHistory(
+            @Parameter(description = "Certificate UUID") @PathVariable UUID id,
+            @Parameter(description = "Page number (0-indexed)")
+                    @RequestParam(defaultValue = "0")
+                    @Min(0)
+                    int page,
+            @Parameter(description = "Page size (1-100)")
+                    @RequestParam(defaultValue = "20")
+                    @Min(1)
+                    @Max(100)
+                    int size) {
+        PageResponse<OutboxEventResponse> result = service.getEventHistory(id, page, size);
+        return ResponseEntity.ok(result);
     }
 
     private String getPrincipalName() {

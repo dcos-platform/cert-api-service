@@ -8,7 +8,7 @@ import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.dto.RevocationRequest;
-import com.dcos.platform.certapi.event.CertificateEventPublisher;
+import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import java.time.Instant;
@@ -37,7 +37,7 @@ class CertificateCreationIntegrationTest {
 
     @Autowired private CertificateRepository repository;
 
-    @MockBean private CertificateEventPublisher eventPublisher;
+    @MockBean private OutboxEnqueueService outboxEnqueueService;
 
     private static final String PRINCIPAL = "integration-test-admin";
     private static final String ISSUER = "Integration Test Authority";

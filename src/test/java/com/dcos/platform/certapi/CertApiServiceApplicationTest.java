@@ -29,6 +29,6 @@ class CertApiServiceApplicationTest {
         assertThat(environment.getProperty("spring.jpa.hibernate.ddl-auto")).isEqualTo("validate");
         assertThat(environment.getProperty("spring.jpa.open-in-view")).isEqualTo("false");
         assertThat(entityManagerFactory.isOpen()).isTrue();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("4");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
     }
 }
