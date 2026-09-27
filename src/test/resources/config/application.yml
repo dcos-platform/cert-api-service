@@ -12,3 +12,7 @@ spring:
   flyway:
     # Allow clean operations in tests so we can reset the schema between test runs.
     cleanDisabled: false
+  task:
+    scheduling:
+      # Disable scheduled tasks in tests to prevent interference with test data.
+      enabled: false

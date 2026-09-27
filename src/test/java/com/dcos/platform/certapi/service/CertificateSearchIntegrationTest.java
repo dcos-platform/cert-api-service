@@ -3,8 +3,10 @@ package com.dcos.platform.certapi.service;
 import static org.assertj.core.api.Assertions.*;
 
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.PageResponse;
+import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import java.time.Instant;
@@ -99,7 +101,9 @@ class CertificateSearchIntegrationTest {
                                 30,
                                 null),
                         PRINCIPAL);
-        service.revoke(createdRevoked.id());
+        RevocationRequest revocationRequest = new RevocationRequest();
+        revocationRequest.setReason(RevocationReason.SUPERSEDED);
+        service.revoke(createdRevoked.id(), revocationRequest);
 
         // Search only for active certificates
         Sort sort = Sort.by(Sort.Order.asc("createdAt"));

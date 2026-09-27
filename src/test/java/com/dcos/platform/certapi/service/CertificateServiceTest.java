@@ -7,9 +7,12 @@ import static org.mockito.Mockito.*;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
+import com.dcos.platform.certapi.domain.OrchestrationStatus;
+import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
-import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.RenewalRequest;
+import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
@@ -22,6 +25,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -38,13 +42,17 @@ class CertificateServiceTest {
     @InjectMocks private CertificateService service;
 
     private CertificateCreateRequest createRequest;
-    private CertificateRequest request;
+    private RenewalRequest renewalRequest;
+    private RevocationRequest revocationRequest;
     private Certificate savedCert;
     private final String PRINCIPAL = "test-admin";
 
     @BeforeEach
     void setUp() {
-        Instant tomorrow = Instant.now().plus(365, ChronoUnit.DAYS);
+        Instant now = Instant.now();
+        Instant tomorrow = now.plus(365, ChronoUnit.DAYS);
+        Instant nextYear = now.plus(730, ChronoUnit.DAYS);
+
         createRequest =
                 new CertificateCreateRequest(
                         "CN=test.example.com,OU=test,O=DCOS",
@@ -55,11 +63,13 @@ class CertificateServiceTest {
                         30,
                         null);
 
-        request = new CertificateRequest();
-        request.setSubject("CN=test.example.com");
-        request.setType("TLS");
-        request.setExpiresAt(tomorrow);
-        request.setIssuedBy("Internal CA");
+        renewalRequest = new RenewalRequest();
+        renewalRequest.setExpiresAt(nextYear);
+        renewalRequest.setRenewalWindowDays(30);
+
+        revocationRequest = new RevocationRequest();
+        revocationRequest.setReason(RevocationReason.SUPERSEDED);
+        revocationRequest.setComment("Renewed");
 
         savedCert = new Certificate();
         savedCert.setId(UUID.randomUUID());
@@ -68,11 +78,12 @@ class CertificateServiceTest {
         savedCert.setCommonName(createRequest.commonName());
         savedCert.setType(CertificateType.TLS);
         savedCert.setStatus(CertificateStatus.ACTIVE);
-        savedCert.setIssuedAt(Instant.now());
+        savedCert.setIssuedAt(now);
         savedCert.setExpiresAt(tomorrow);
         savedCert.setIssuedBy("Internal CA");
         savedCert.setRequestedBy(PRINCIPAL);
         savedCert.setRenewalWindowDays(30);
+        savedCert.setOrchestrationStatus(OrchestrationStatus.PENDING);
     }
 
     @Test
@@ -179,14 +190,46 @@ class CertificateServiceTest {
     }
 
     @Test
-    void renew_shouldUpdateAndPublishEvent() {
+    void renew_shouldUpdateValidityFieldsOnly() {
         when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
-        when(repository.save(any(Certificate.class))).thenReturn(savedCert);
+        var argument = ArgumentCaptor.forClass(Certificate.class);
+        when(repository.save(argument.capture())).thenReturn(savedCert);
 
-        CertificateResponse response = service.renew(savedCert.getId(), request);
+        Instant originalExpiryPlus1 = savedCert.getExpiresAt().plus(1, ChronoUnit.DAYS);
+        renewalRequest.setExpiresAt(originalExpiryPlus1);
+        service.renew(savedCert.getId(), renewalRequest);
 
-        assertThat(response.status()).isEqualTo(CertificateStatus.ACTIVE);
-        verify(eventPublisher).publishRenewed(savedCert);
+        Certificate saved = argument.getValue();
+        assertThat(saved.getSubject()).isEqualTo(savedCert.getSubject());
+        assertThat(saved.getType()).isEqualTo(savedCert.getType());
+        assertThat(saved.getIssuedBy()).isEqualTo(savedCert.getIssuedBy());
+        verify(eventPublisher).publishRenewed(any(Certificate.class));
+    }
+
+    @Test
+    void renew_shouldIncrementCountAndResetOrchestration() {
+        savedCert.setRenewalCount(5);
+        when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
+        var argument = ArgumentCaptor.forClass(Certificate.class);
+        when(repository.save(argument.capture())).thenReturn(savedCert);
+
+        Instant newExpiry = savedCert.getExpiresAt().plus(1, ChronoUnit.DAYS);
+        renewalRequest.setExpiresAt(newExpiry);
+        service.renew(savedCert.getId(), renewalRequest);
+
+        Certificate saved = argument.getValue();
+        assertThat(saved.getRenewalCount()).isEqualTo(6);
+        assertThat(saved.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.PENDING);
+    }
+
+    @Test
+    void renew_shouldThrow_whenExpiryNotStrictlyLater() {
+        when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
+
+        renewalRequest.setExpiresAt(savedCert.getExpiresAt());
+        assertThatThrownBy(() -> service.renew(savedCert.getId(), renewalRequest))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("strictly later");
     }
 
     @Test
@@ -194,20 +237,39 @@ class CertificateServiceTest {
         savedCert.setStatus(CertificateStatus.REVOKED);
         when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
 
-        assertThatThrownBy(() -> service.renew(savedCert.getId(), request))
+        Instant newExpiry = savedCert.getExpiresAt().plus(1, ChronoUnit.DAYS);
+        renewalRequest.setExpiresAt(newExpiry);
+        assertThatThrownBy(() -> service.renew(savedCert.getId(), renewalRequest))
                 .isInstanceOf(CertificateStateException.class)
                 .hasMessageContaining("Cannot renew a revoked certificate");
     }
 
     @Test
-    void revoke_shouldSetStatusAndPublishEvent() {
+    void renew_shouldAllowFromExpiredStatus() {
+        savedCert.setStatus(CertificateStatus.EXPIRED);
         when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
-        when(repository.save(any(Certificate.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(repository.save(any(Certificate.class))).thenReturn(savedCert);
 
-        CertificateResponse response = service.revoke(savedCert.getId());
+        Instant newExpiry = savedCert.getExpiresAt().plus(1, ChronoUnit.DAYS);
+        renewalRequest.setExpiresAt(newExpiry);
+        service.renew(savedCert.getId(), renewalRequest);
 
-        assertThat(response.status()).isEqualTo(CertificateStatus.REVOKED);
-        verify(eventPublisher).publishRevoked(any(Certificate.class));
+        verify(eventPublisher).publishRenewed(any(Certificate.class));
+    }
+
+    @Test
+    void revoke_shouldSetTimestampReasonAndComment() {
+        when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
+        var argument = ArgumentCaptor.forClass(Certificate.class);
+        when(repository.save(argument.capture())).thenReturn(savedCert);
+
+        service.revoke(savedCert.getId(), revocationRequest);
+
+        Certificate saved = argument.getValue();
+        assertThat(saved.getStatus()).isEqualTo(CertificateStatus.REVOKED);
+        assertThat(saved.getRevokedAt()).isNotNull();
+        assertThat(saved.getRevocationReason()).isEqualTo(RevocationReason.SUPERSEDED);
+        assertThat(saved.getRevocationComment()).isEqualTo("Renewed");
     }
 
     @Test
@@ -215,9 +277,20 @@ class CertificateServiceTest {
         savedCert.setStatus(CertificateStatus.REVOKED);
         when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
 
-        assertThatThrownBy(() -> service.revoke(savedCert.getId()))
+        assertThatThrownBy(() -> service.revoke(savedCert.getId(), revocationRequest))
                 .isInstanceOf(CertificateStateException.class)
                 .hasMessageContaining("already revoked");
+    }
+
+    @Test
+    void revoke_shouldAllowFromExpiredStatus() {
+        savedCert.setStatus(CertificateStatus.EXPIRED);
+        when(repository.findById(savedCert.getId())).thenReturn(Optional.of(savedCert));
+        when(repository.save(any(Certificate.class))).thenReturn(savedCert);
+
+        service.revoke(savedCert.getId(), revocationRequest);
+
+        verify(eventPublisher).publishRevoked(any(Certificate.class));
     }
 
     private org.mockito.ArgumentCaptor<Certificate> argumentCaptor() {

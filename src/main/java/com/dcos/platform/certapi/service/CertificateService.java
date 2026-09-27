@@ -5,9 +5,10 @@ import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
-import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.dto.PageResponse;
+import com.dcos.platform.certapi.dto.RenewalRequest;
+import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
@@ -191,17 +192,31 @@ public class CertificateService {
 
     @PreAuthorize("hasRole('ADMIN')")
     @Transactional
-    public CertificateResponse renew(UUID id, CertificateRequest request) {
+    public CertificateResponse renew(UUID id, RenewalRequest request) {
         Certificate cert = findOrThrow(id);
-        if (cert.getStatus() == CertificateStatus.REVOKED) {
-            throw new CertificateStateException(id, "Cannot renew a revoked certificate");
+        try {
+            CertificateStateMachine.validateRenewTransition(cert.getStatus());
+        } catch (IllegalStateException e) {
+            throw new CertificateStateException(id, e.getMessage());
         }
-        cert.setSubject(request.getSubject());
-        cert.setType(CertificateType.valueOf(request.getType().toUpperCase()));
+
+        if (!request.getExpiresAt().isAfter(cert.getExpiresAt())) {
+            throw new IllegalArgumentException(
+                    "New expiry must be strictly later than current expiry");
+        }
+
         cert.setIssuedAt(Instant.now());
         cert.setExpiresAt(request.getExpiresAt());
-        cert.setIssuedBy(request.getIssuedBy());
+        if (request.getRenewalWindowDays() != null) {
+            cert.setRenewalWindowDays(request.getRenewalWindowDays());
+        }
+        if (request.getCorrelationId() != null) {
+            cert.setCorrelationId(request.getCorrelationId());
+        }
         cert.setStatus(CertificateStatus.ACTIVE);
+        cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
+        cert.setRenewalCount(cert.getRenewalCount() + 1);
+        cert.setLastError(null);
 
         Certificate saved = repository.save(cert);
         eventPublisher.publishRenewed(saved);
@@ -210,14 +225,18 @@ public class CertificateService {
 
     @PreAuthorize("hasRole('ADMIN')")
     @Transactional
-    public CertificateResponse revoke(UUID id) {
+    public CertificateResponse revoke(UUID id, RevocationRequest request) {
         Certificate cert = findOrThrow(id);
         try {
             CertificateStateMachine.validateRevokeTransition(cert.getStatus());
         } catch (IllegalStateException e) {
             throw new CertificateStateException(id, e.getMessage());
         }
+
         cert.setStatus(CertificateStatus.REVOKED);
+        cert.setRevokedAt(Instant.now());
+        cert.setRevocationReason(request.getReason());
+        cert.setRevocationComment(request.getComment());
 
         Certificate saved = repository.save(cert);
         eventPublisher.publishRevoked(saved);

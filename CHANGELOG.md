@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 8: Certificate lifecycle transitions
+
+#### Added
+
+- **Renewal request record**: `RenewalRequest` accepts only the new expiry date (must be strictly later than current), an optional renewal window (1–365 days), and an optional correlation identifier. Separation from the legacy `CertificateRequest` clarifies that renewal never modifies subject, type, or issuing authority—only validity fields and related metadata.
+- **Revocation request record**: `RevocationRequest` captures a required revocation reason (enum) and optional comment (≤512 characters). Like renewal, this separation from the legacy DTO simplifies the API contract and enables type-safe reason handling.
+- **Renewal behavior rewrite**: Renewal now validates the proposed new expiry against the current expiry at the application level, rejecting non-future or non-later values with `CERT_INVALID_RENEWAL` error code (400). It updates only `issuedAt` (set to now), `expiresAt`, `renewalWindowDays` (if provided), `correlationId` (if provided), and increments `renewalCount` while resetting `orchestrationStatus` to PENDING and clearing `lastError`. Subject, type, and issuing authority are explicitly left untouched, matching the design document's forbiddance of re-subjecting.
+- **Revocation behavior rewrite**: Revocation now accepts a `RevocationRequest` and sets not only `status = REVOKED` but also `revokedAt = now()`, `revocationReason`, and `revocationComment`. The timestamp is the critical addition—without it, the database consistency constraint cannot hold.
+- **Expiry sweep with scheduling**: `CertificateExpirySweep` is a separate component (not a method on the service) that runs on a configurable schedule (default 5 minutes via `cert-api.expiry-sweep-interval`, in milliseconds). It iterates in batches of 100 to move any ACTIVE certificate past its `expiresAt` to EXPIRED status, leaving REVOKED certificates untouched. Iteration and save (not bulk update) ensures optimistic locking and entity lifecycle callbacks work correctly. `@EnableScheduling` is added to the application class; test configuration disables scheduling to prevent test interference.
+- **Revocation consistency constraint**: Database migration V4 backfills existing revoked certificates without a timestamp (setting `revokedAt = now()`), clears any timestamp from non-revoked rows, then adds the check `(status = 'REVOKED') = (revoked_at IS NOT NULL)`. This constraint is enforced at the database level, preventing a class of stale-data bugs.
+- **Four new exception handlers**: `OptimisticLockingFailureException` → 409 Conflict / `CERT_CONCURRENT_MODIFICATION`; `HttpMessageNotReadableException` → 400 Bad Request / `CERT_MALFORMED_BODY`; `AccessDeniedException` → 403 Forbidden / `CERT_FORBIDDEN`; `AuthenticationException` → 401 Unauthorized / `CERT_UNAUTHENTICATED`. The existing `IllegalArgumentException` handler now maps to `CERT_INVALID_RENEWAL` since renewal validation is its primary use case.
+- **Comprehensive lifecycle tests**: Unit tests with mocks verify renewal rejects non-later expiry, leaves subject/type/issuer untouched, increments renewal count, and resets orchestration status. Service layer tests confirm both renewal and revocation work from ACTIVE and EXPIRED states, renewal fails from REVOKED (with correct state validation), revocation sets the timestamp and reason, and revocation fails when already revoked. Integration tests confirm the sweep moves past-expiry certificates and leaves revoked ones alone, the consistency constraint rejects direct schema violations, and renewal of an expired cert fails (409) when an active cert already exists for that subject/type (index collision). Controller slice tests confirm 200 on success, 409 on invalid state, 400 for validation failures (missing reason, non-future expiry, non-later expiry, over-long comment), 403 for non-admin user, 401 when anonymous.
+
+#### Changed
+
+- **CertificateService.renew()**: Signature changed from `renew(UUID id, CertificateRequest request)` to `renew(UUID id, RenewalRequest request)`. Behavior now validates the new expiry strictly later than the current expiry, updates only validity-related fields, and resets orchestration status to PENDING.
+- **CertificateService.revoke()**: Signature changed from `revoke(UUID id)` to `revoke(UUID id, RevocationRequest request)`. Behavior now accepts revocation reason and optional comment, and critically, sets `revokedAt = now()`.
+- **CertificateController.renew()**: Endpoint now accepts a `RenewalRequest` body, matching the service signature.
+- **CertificateController.revoke()**: Endpoint now accepts a `RevocationRequest` body, matching the service signature.
+- **GlobalExceptionHandler**: Added handlers for optimistic locking failures, malformed HTTP bodies, access denial, and authentication failures. Existing `IllegalArgumentException` handler now targets renewal validation (maps to `CERT_INVALID_RENEWAL` error code).
+- **CertificateRepository**: Added `findByStatusAndExpiresAtBefore(CertificateStatus status, Instant now, Pageable pageable)` for the sweep.
+- **Test configuration**: `spring.task.scheduling.enabled: false` disables scheduled tasks during test runs to prevent the sweep from interfering with test data.
+- **Application configuration**: Added `cert-api.expiry-sweep-interval: 300000` (5 minutes default) for sweep scheduling.
+
+#### Removed
+
+- **CertificateRequest DTO**: The legacy POJO is no longer used. `RenewalRequest` and `RevocationRequest` replace it, each with a narrower, clearer contract.
+
 ### Story 7: Certificate search and pagination
 
 #### Added

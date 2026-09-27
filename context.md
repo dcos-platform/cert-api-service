@@ -10,14 +10,14 @@ currently exist. It does not contain rules or constraints; those live in claude.
 
 ## Current Implementation State
 
-Stories 1–7 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. Story 7 (Certificate search and pagination) adds dynamic filtering, sorting, and paginated listing with composable JPA specifications. The service now has:
+Stories 1–8 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. Story 7 (Certificate search and pagination) adds dynamic filtering, sorting, and paginated listing with composable JPA specifications. Story 8 (Certificate lifecycle transitions) implements renewal and revocation with proper state validation, an expiry sweep, and a database consistency constraint. The service now has:
 - A REST controller exposing seven endpoints for certificate lifecycle operations: POST create (returns 201 with Location header), GET list with filtering/paging/sorting, GET by id, GET /expiring, POST renew, POST revoke. Search supports filtering by status, type, orchestration status, issuedBy, commonName substring, and expiry window; sorting is restricted to a fixed allow-list (createdAt, expiresAt, issuedAt, commonName, subject, status, type) to prevent injection
 - A Flyway-managed PostgreSQL schema with three migrations. V3 (Story 6) enforces NOT NULL on serial_number, common_name, requested_by and adds a partial unique index on (subject, type) WHERE status = 'ACTIVE'
 - A full `Certificate` entity with all fields non-nullable where required
 - Enumerations: CertificateStatus (ACTIVE, EXPIRED, REVOKED), CertificateType (TLS, CLIENT, CA, CODE_SIGNING), OrchestrationStatus (PENDING, PROCESSING, COMPLETED, FAILED), RevocationReason (UNSPECIFIED, KEY_COMPROMISE, CA_COMPROMISE, AFFILIATION_CHANGED, SUPERSEDED, CESSATION_OF_OPERATION)
 - Service layer implementing certificate creation with serial number generation (format DCOS-YYYY-<12hex>, collision retry), common name derivation from subject or request, and principal capture. `CertificateStateMachine` validates state transitions as pure logic. Search and list operations use composable JPA `Specification` predicates for status, type, orchestration status, issuedBy, commonName substring, and expiry window filtering
 - Role-based access control (USER and ADMIN) at method level
-- Request DTOs: `CertificateCreateRequest` (record), `CertificateRequest` (POJO for renew/revoke)
+- Request DTOs: `CertificateCreateRequest` (record for create), `RenewalRequest` (POJO for renewal with future expiry and optional window), `RevocationRequest` (POJO for revocation with required reason and optional comment)
 - Response DTOs: `CertificateResponse` (record with 19 fields for individual certificate responses), `PageResponse<T>` (generic paginated response with content, page, size, totalElements, totalPages, first, last for list operations)
 - Error codes enumeration and extended global exception handler returning 409 Conflict on duplicate or constraint violations
 - Repository with serial number collision checking; implements `JpaSpecificationExecutor<Certificate>` for dynamic filtering via `CertificateSpecifications` factory
@@ -94,18 +94,19 @@ src/
   - CertificateRepository: JpaRepository interface implementing JpaSpecificationExecutor<Certificate> for dynamic filtering, with custom finders (by status, by subject substring)
   - CertificateSpecifications: JPA Specification factory for composable filter predicates (status, type, orchestration status, issuedBy, commonName substring, expiringBefore), each returning null when its filter is absent so they compose via Specification.where(...).and(...)
 - **service/**: Business logic
-  - CertificateService: Orchestrates persistence and event publication; implements state validation and role-based authorization via @PreAuthorize annotations
+  - CertificateService: Orchestrates persistence and event publication; implements state validation and role-based authorization via @PreAuthorize annotations. Renewal validates new expiry is strictly later, updates only validity fields, and increments renewal count. Revocation sets revokedAt timestamp along with reason and comment.
+  - CertificateStateMachine: Pure logic (no dependencies) implementing the full synchronous status state table (ACTIVE, EXPIRED, REVOKED). Validates renewal and revocation transitions; computes expiry transition.
+  - CertificateExpirySweep: Scheduled component (disabled in tests) that sweeps ACTIVE certificates past expiry to EXPIRED status in batches, iterating and saving per certificate to respect optimistic locking.
 - **validation/**: Custom validation annotation
   - ValidCertificateType: Constraint annotation for allowed certificate types
   - CertificateTypeValidator: Implementation of the constraint
 
 **Database migrations** (src/main/resources/db/migration, Flyway):
-- V1__create_schema_and_certificates.sql: creates schema `dcos_certificates` and the `certificates` table.
-  - Check constraints cover type, status, orchestration status, revocation reason, validity, renewal window, and revoked-consistency.
-  - The serial number is unique.
-  - Indexes cover status, expires_at, common_name, (type, status), and orchestration_status.
-- V2__seed_demo_certificates.sql: seeds five fictional certificates with fixed ids `11111111-…` through `55555555-…`: service-alpha, service-bravo, dcos-root, build-signer, and service-echo, which sits inside its renewal window. `ON CONFLICT (id) DO NOTHING` makes the insert safe to re-run.
-- Not yet created: the outbox and processed-completions tables, and the partial unique index on active (subject, type). Each arrives with the story that uses it.
+- V1__create_schema_and_certificates.sql: creates schema `dcos_certificates` and the `certificates` table. Check constraints cover type, status, orchestration status, revocation reason, validity, renewal window. The serial number is unique. Indexes cover status, expires_at, common_name, (type, status), and orchestration_status. Revoked-consistency check is deferred to V4.
+- V2__seed_demo_certificates.sql: seeds five fictional certificates with fixed ids `11111111-…` through `55555555-…`: service-alpha, service-bravo, dcos-root, build-signer, and service-echo (inside renewal window). `ON CONFLICT (id) DO NOTHING` makes re-run safe.
+- V3__restore_deferred_constraints.sql: Adds NOT NULL to serial_number, common_name, requested_by with backfill. Creates partial unique index on (subject, type) WHERE status = 'ACTIVE'.
+- V4__restore_revocation_consistency.sql: Backfills revokedAt (to now()) on any revoked row lacking a timestamp, clears revokedAt from non-revoked rows, then adds check `(status = 'REVOKED') = (revoked_at IS NOT NULL)` to enforce the consistency constraint at the database level.
+- Not yet created: the outbox and processed-completions tables (Story 9–10).
 
 **Configuration file** (src/main/resources/application.yml):
 - The datasource targets the shared `dcos` database through POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, and POSTGRES_PASSWORD. The defaults match dcos-infra's .env.example
@@ -133,7 +134,6 @@ src/
 ## What Does Not Yet Exist
 
 The following will arrive in future stories:
-- **Expiry sweep**: A scheduled task that transitions ACTIVE → EXPIRED when now() > expires_at, enqueuing CERTIFICATE_EXPIRED events (Story 8)
 - **Transactional outbox**: Events are published inside the service transaction with no guaranteed delivery yet. The outbox table and OutboxRelay service arrive with Story 9
 - **Completion consumer**: Nothing listens for orchestrator completions yet. The processed-completions table and CompletionListener arrive with Story 10
 
@@ -158,7 +158,7 @@ The following will arrive in future stories:
 
 Work proceeds as a sequence of numbered stories. Each story branches from main, delivers its own tests, and is merged before the next story begins. Each story updates this document to reflect the new state of the repository.
 
-Stories 1–7 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, certificate creation, and certificate search and pagination. The remaining stories are certificate lifecycle transitions (8), lifecycle event publication (9), and completion consumption and API hardening (10).
+Stories 1–8 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, certificate creation, certificate search and pagination, and certificate lifecycle transitions. The remaining stories are lifecycle event publication (9) and completion consumption and API hardening (10).
 
 ## Intended Use of This Document
 

@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
@@ -186,7 +188,9 @@ class CertificateCreationIntegrationTest {
 
         // Create and revoke the first certificate
         CertificateResponse first = service.create(request, PRINCIPAL);
-        service.revoke(first.id());
+        RevocationRequest revocationRequest = new RevocationRequest();
+        revocationRequest.setReason(RevocationReason.SUPERSEDED);
+        service.revoke(first.id(), revocationRequest);
 
         // Creating a second with the same subject and type should succeed (first is revoked)
         CertificateResponse second = service.create(request, PRINCIPAL);
