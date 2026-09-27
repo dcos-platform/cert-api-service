@@ -4,9 +4,10 @@ import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
-import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.dto.PageResponse;
+import com.dcos.platform.certapi.dto.RenewalRequest;
+import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.service.CertificateService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -208,13 +209,14 @@ public class CertificateController {
     @PostMapping("/{id}/renew")
     public ResponseEntity<CertificateResponse> renew(
             @Parameter(description = "Certificate UUID") @PathVariable UUID id,
-            @Valid @RequestBody CertificateRequest request) {
+            @Valid @RequestBody RenewalRequest request) {
         return ResponseEntity.ok(service.renew(id, request));
     }
 
     @Operation(summary = "Revoke a certificate")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "Certificate revoked"),
+        @ApiResponse(responseCode = "400", description = "Invalid request payload"),
         @ApiResponse(responseCode = "401", description = "Authentication required"),
         @ApiResponse(responseCode = "403", description = "Insufficient permissions"),
         @ApiResponse(responseCode = "404", description = "Certificate not found"),
@@ -222,8 +224,9 @@ public class CertificateController {
     })
     @PostMapping("/{id}/revoke")
     public ResponseEntity<CertificateResponse> revoke(
-            @Parameter(description = "Certificate UUID") @PathVariable UUID id) {
-        return ResponseEntity.ok(service.revoke(id));
+            @Parameter(description = "Certificate UUID") @PathVariable UUID id,
+            @Valid @RequestBody RevocationRequest request) {
+        return ResponseEntity.ok(service.revoke(id, request));
     }
 
     private String getPrincipalName() {

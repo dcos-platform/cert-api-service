@@ -11,10 +11,12 @@ import com.dcos.platform.certapi.config.SecurityConfig;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
+import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
-import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.dto.PageResponse;
+import com.dcos.platform.certapi.dto.RenewalRequest;
+import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.service.CertificateService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -44,11 +46,13 @@ class CertificateControllerTest {
     @MockBean private CertificateService service;
 
     private CertificateCreateRequest createRequest;
-    private CertificateRequest renewRequest;
+    private RenewalRequest renewalRequest;
+    private RevocationRequest revocationRequest;
 
     @BeforeEach
     void setUp() {
         Instant tomorrow = Instant.now().plus(365, ChronoUnit.DAYS);
+        Instant nextYear = Instant.now().plus(730, ChronoUnit.DAYS);
         createRequest =
                 new CertificateCreateRequest(
                         "CN=test.example.com,OU=test,O=DCOS",
@@ -59,11 +63,13 @@ class CertificateControllerTest {
                         30,
                         null);
 
-        renewRequest = new CertificateRequest();
-        renewRequest.setSubject("CN=test.example.com");
-        renewRequest.setType("TLS");
-        renewRequest.setExpiresAt(tomorrow);
-        renewRequest.setIssuedBy("Internal CA");
+        renewalRequest = new RenewalRequest();
+        renewalRequest.setExpiresAt(nextYear);
+        renewalRequest.setRenewalWindowDays(30);
+
+        revocationRequest = new RevocationRequest();
+        revocationRequest.setReason(RevocationReason.SUPERSEDED);
+        revocationRequest.setComment("Renewed");
     }
 
     private CertificateResponse buildResponse(UUID id) {
@@ -182,15 +188,31 @@ class CertificateControllerTest {
     @WithMockUser(roles = "ADMIN")
     void renewCertificate_shouldReturn200() throws Exception {
         UUID id = UUID.randomUUID();
-        when(service.renew(eq(id), any(CertificateRequest.class))).thenReturn(buildResponse(id));
+        when(service.renew(eq(id), any(RenewalRequest.class))).thenReturn(buildResponse(id));
 
         mockMvc.perform(
                         post("/api/v1/certificates/{id}/renew", id)
                                 .with(csrf())
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(renewRequest)))
+                                .content(objectMapper.writeValueAsString(renewalRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id.toString()));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void renewCertificate_shouldReturn400_forInvalidRequest() throws Exception {
+        UUID id = UUID.randomUUID();
+
+        RenewalRequest invalid = new RenewalRequest();
+        invalid.setExpiresAt(Instant.now().minus(1, ChronoUnit.DAYS));
+
+        mockMvc.perform(
+                        post("/api/v1/certificates/{id}/renew", id)
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(invalid)))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -208,10 +230,33 @@ class CertificateControllerTest {
         revokedCert.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
         revokedCert.setIssuedBy("Internal CA");
         revokedCert.setRequestedBy("admin");
-        when(service.revoke(id)).thenReturn(CertificateResponse.from(revokedCert));
+        revokedCert.setRevokedAt(Instant.now());
+        revokedCert.setRevocationReason(RevocationReason.SUPERSEDED);
+        when(service.revoke(eq(id), any(RevocationRequest.class)))
+                .thenReturn(CertificateResponse.from(revokedCert));
 
-        mockMvc.perform(post("/api/v1/certificates/{id}/revoke", id).with(csrf()))
+        mockMvc.perform(
+                        post("/api/v1/certificates/{id}/revoke", id)
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(revocationRequest)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REVOKED"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void revokeCertificate_shouldReturn400_forMissingReason() throws Exception {
+        UUID id = UUID.randomUUID();
+
+        RevocationRequest invalid = new RevocationRequest();
+        invalid.setReason(null);
+
+        mockMvc.perform(
+                        post("/api/v1/certificates/{id}/revoke", id)
+                                .with(csrf())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(invalid)))
+                .andExpect(status().isBadRequest());
     }
 }

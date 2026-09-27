@@ -11,8 +11,12 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -391,22 +395,145 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void handleIllegalArgumentSetsErrorCode() {
-        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
+        IllegalArgumentException ex =
+                new IllegalArgumentException(
+                        "New expiry must be strictly later than current expiry");
 
         ProblemDetail problem = handler.handleIllegalArgument(ex);
 
         assertThat(problem.getProperties())
-                .containsEntry("code", ErrorCode.CERT_INVALID_PARAMETER.name());
+                .containsEntry("code", ErrorCode.CERT_INVALID_RENEWAL.name());
     }
 
     @Test
     void handleIllegalArgumentSetsErrorType() {
-        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
+        IllegalArgumentException ex =
+                new IllegalArgumentException(
+                        "New expiry must be strictly later than current expiry");
 
         ProblemDetail problem = handler.handleIllegalArgument(ex);
 
         assertThat(problem.getType())
-                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/invalid-parameter"));
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/invalid-renewal"));
+    }
+
+    @Test
+    void handleOptimisticLockingFailureReturnsConflictStatus() {
+        OptimisticLockingFailureException ex =
+                new OptimisticLockingFailureException("Concurrent modification");
+
+        ProblemDetail problem = handler.handleOptimisticLockingFailure(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.CONFLICT.value());
+    }
+
+    @Test
+    void handleOptimisticLockingFailureSetsErrorCode() {
+        OptimisticLockingFailureException ex =
+                new OptimisticLockingFailureException("Concurrent modification");
+
+        ProblemDetail problem = handler.handleOptimisticLockingFailure(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_CONCURRENT_MODIFICATION.name());
+    }
+
+    @Test
+    void handleOptimisticLockingFailureSetsErrorType() {
+        OptimisticLockingFailureException ex =
+                new OptimisticLockingFailureException("Concurrent modification");
+
+        ProblemDetail problem = handler.handleOptimisticLockingFailure(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(
+                        URI.create("https://errors.dcos.local/cert-api/concurrent-modification"));
+    }
+
+    @Test
+    void handleHttpMessageNotReadableReturnsBadRequestStatus() {
+        HttpMessageNotReadableException ex = new HttpMessageNotReadableException("Malformed JSON");
+
+        ProblemDetail problem = handler.handleHttpMessageNotReadable(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+    }
+
+    @Test
+    void handleHttpMessageNotReadableSetsErrorCode() {
+        HttpMessageNotReadableException ex = new HttpMessageNotReadableException("Malformed JSON");
+
+        ProblemDetail problem = handler.handleHttpMessageNotReadable(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_MALFORMED_BODY.name());
+    }
+
+    @Test
+    void handleHttpMessageNotReadableSetsErrorType() {
+        HttpMessageNotReadableException ex = new HttpMessageNotReadableException("Malformed JSON");
+
+        ProblemDetail problem = handler.handleHttpMessageNotReadable(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/malformed-body"));
+    }
+
+    @Test
+    void handleAccessDeniedReturnsForbiddenStatus() {
+        AccessDeniedException ex = new AccessDeniedException("User lacks permission");
+
+        ProblemDetail problem = handler.handleAccessDenied(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
+    }
+
+    @Test
+    void handleAccessDeniedSetsErrorCode() {
+        AccessDeniedException ex = new AccessDeniedException("User lacks permission");
+
+        ProblemDetail problem = handler.handleAccessDenied(ex);
+
+        assertThat(problem.getProperties()).containsEntry("code", ErrorCode.CERT_FORBIDDEN.name());
+    }
+
+    @Test
+    void handleAccessDeniedSetsErrorType() {
+        AccessDeniedException ex = new AccessDeniedException("User lacks permission");
+
+        ProblemDetail problem = handler.handleAccessDenied(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/forbidden"));
+    }
+
+    @Test
+    void handleAuthenticationExceptionReturnsUnauthorizedStatus() {
+        BadCredentialsException ex = new BadCredentialsException("Invalid credentials");
+
+        ProblemDetail problem = handler.handleAuthenticationException(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void handleAuthenticationExceptionSetsErrorCode() {
+        BadCredentialsException ex = new BadCredentialsException("Invalid credentials");
+
+        ProblemDetail problem = handler.handleAuthenticationException(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_UNAUTHENTICATED.name());
+    }
+
+    @Test
+    void handleAuthenticationExceptionSetsErrorType() {
+        BadCredentialsException ex = new BadCredentialsException("Invalid credentials");
+
+        ProblemDetail problem = handler.handleAuthenticationException(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/unauthenticated"));
     }
 
     private MethodArgumentNotValidException createValidationException(

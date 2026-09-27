@@ -28,6 +28,7 @@ spring:
     virtual-host: ${RABBITMQ_VHOST:/}
 
 cert-api:
+  expiry-sweep-interval: 300000
   rabbitmq:
     exchange: cert.events
     routing-key:
