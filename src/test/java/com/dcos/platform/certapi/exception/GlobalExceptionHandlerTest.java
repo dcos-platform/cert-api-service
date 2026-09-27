@@ -2,8 +2,12 @@ package com.dcos.platform.certapi.exception;
 
 import static org.assertj.core.api.Assertions.*;
 
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import java.net.URI;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -12,6 +16,7 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 class GlobalExceptionHandlerTest {
 
@@ -306,6 +311,102 @@ class GlobalExceptionHandlerTest {
 
         assertThat(problem.getType())
                 .isEqualTo(URI.create("https://errors.dcos.local/cert-api/internal-error"));
+    }
+
+    @Test
+    void handleConstraintViolationReturnsBadRequestStatus() {
+        Set<ConstraintViolation<?>> violations = new HashSet<>();
+        ConstraintViolationException ex = new ConstraintViolationException(violations);
+
+        ProblemDetail problem = handler.handleConstraintViolation(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+    }
+
+    @Test
+    void handleConstraintViolationSetsErrorCode() {
+        Set<ConstraintViolation<?>> violations = new HashSet<>();
+        ConstraintViolationException ex = new ConstraintViolationException(violations);
+
+        ProblemDetail problem = handler.handleConstraintViolation(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_VALIDATION_FAILED.name());
+    }
+
+    @Test
+    void handleConstraintViolationSetsErrorType() {
+        Set<ConstraintViolation<?>> violations = new HashSet<>();
+        ConstraintViolationException ex = new ConstraintViolationException(violations);
+
+        ProblemDetail problem = handler.handleConstraintViolation(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/validation-error"));
+    }
+
+    @Test
+    void handleMethodArgumentTypeMismatchReturnsBadRequestStatus() {
+        MethodArgumentTypeMismatchException ex =
+                new MethodArgumentTypeMismatchException(
+                        "badvalue", String.class, "param", null, null);
+
+        ProblemDetail problem = handler.handleTypeMismatch(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+    }
+
+    @Test
+    void handleMethodArgumentTypeMismatchSetsErrorCode() {
+        MethodArgumentTypeMismatchException ex =
+                new MethodArgumentTypeMismatchException(
+                        "badvalue", String.class, "param", null, null);
+
+        ProblemDetail problem = handler.handleTypeMismatch(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_INVALID_PARAMETER.name());
+    }
+
+    @Test
+    void handleMethodArgumentTypeMismatchSetsErrorType() {
+        MethodArgumentTypeMismatchException ex =
+                new MethodArgumentTypeMismatchException(
+                        "badvalue", String.class, "param", null, null);
+
+        ProblemDetail problem = handler.handleTypeMismatch(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/invalid-parameter"));
+    }
+
+    @Test
+    void handleIllegalArgumentReturnsBadRequestStatus() {
+        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
+
+        ProblemDetail problem = handler.handleIllegalArgument(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+    }
+
+    @Test
+    void handleIllegalArgumentSetsErrorCode() {
+        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
+
+        ProblemDetail problem = handler.handleIllegalArgument(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_INVALID_PARAMETER.name());
+    }
+
+    @Test
+    void handleIllegalArgumentSetsErrorType() {
+        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
+
+        ProblemDetail problem = handler.handleIllegalArgument(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/invalid-parameter"));
     }
 
     private MethodArgumentNotValidException createValidationException(

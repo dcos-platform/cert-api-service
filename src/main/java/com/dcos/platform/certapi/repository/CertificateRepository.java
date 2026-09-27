@@ -5,14 +5,16 @@ import com.dcos.platform.certapi.domain.CertificateStatus;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
 /**
  * Data access for Certificate entities. Extends JpaRepository for CRUD and finder method
- * generation.
+ * generation, and JpaSpecificationExecutor for flexible filtering via Specifications.
  */
 @Repository
-public interface CertificateRepository extends JpaRepository<Certificate, UUID> {
+public interface CertificateRepository
+        extends JpaRepository<Certificate, UUID>, JpaSpecificationExecutor<Certificate> {
 
     List<Certificate> findByStatus(CertificateStatus status);
 

@@ -89,7 +89,7 @@ class CertificateCreationIntegrationTest {
 
         CertificateResponse created = service.create(request, PRINCIPAL);
 
-        Optional<Certificate> persisted = repository.findById(created.getId());
+        Optional<Certificate> persisted = repository.findById(created.id());
         assertThat(persisted).isPresent();
         Certificate cert = persisted.get();
 
@@ -116,7 +116,7 @@ class CertificateCreationIntegrationTest {
 
         CertificateResponse created = service.create(request, PRINCIPAL);
 
-        Optional<Certificate> persisted = repository.findById(created.getId());
+        Optional<Certificate> persisted = repository.findById(created.id());
         assertThat(persisted).isPresent();
         Certificate cert = persisted.get();
 
@@ -140,7 +140,7 @@ class CertificateCreationIntegrationTest {
 
         CertificateResponse created = service.create(request, PRINCIPAL);
 
-        Optional<Certificate> persisted = repository.findById(created.getId());
+        Optional<Certificate> persisted = repository.findById(created.id());
         assertThat(persisted).isPresent();
         Certificate cert = persisted.get();
 
@@ -186,15 +186,15 @@ class CertificateCreationIntegrationTest {
 
         // Create and revoke the first certificate
         CertificateResponse first = service.create(request, PRINCIPAL);
-        service.revoke(first.getId());
+        service.revoke(first.id());
 
         // Creating a second with the same subject and type should succeed (first is revoked)
         CertificateResponse second = service.create(request, PRINCIPAL);
 
-        assertThat(second.getId()).isNotEqualTo(first.getId());
-        assertThat(second.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+        assertThat(second.id()).isNotEqualTo(first.id());
+        assertThat(second.status()).isEqualTo(CertificateStatus.ACTIVE);
 
-        Optional<Certificate> firstCert = repository.findById(first.getId());
+        Optional<Certificate> firstCert = repository.findById(first.id());
         assertThat(firstCert)
                 .isPresent()
                 .get()
@@ -233,8 +233,8 @@ class CertificateCreationIntegrationTest {
         // Creating CLIENT certificate with same subject should succeed (type differs)
         CertificateResponse client = service.create(clientRequest, PRINCIPAL);
 
-        assertThat(tls.getId()).isNotEqualTo(client.getId());
-        assertThat(tls.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
-        assertThat(client.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+        assertThat(tls.id()).isNotEqualTo(client.id());
+        assertThat(tls.status()).isEqualTo(CertificateStatus.ACTIVE);
+        assertThat(client.status()).isEqualTo(CertificateStatus.ACTIVE);
     }
 }

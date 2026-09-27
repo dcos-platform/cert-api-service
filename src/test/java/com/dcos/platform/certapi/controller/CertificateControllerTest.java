@@ -14,6 +14,7 @@ import com.dcos.platform.certapi.domain.CertificateType;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.PageResponse;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.service.CertificateService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -144,11 +146,16 @@ class CertificateControllerTest {
     @WithMockUser(roles = "USER")
     void getAllCertificates_shouldReturn200() throws Exception {
         UUID id = UUID.randomUUID();
-        when(service.getAll()).thenReturn(List.of(buildResponse(id)));
+        CertificateResponse response = buildResponse(id);
+        PageResponse<CertificateResponse> pageResponse =
+                new PageResponse<>(List.of(response), 0, 1, 1, 1, true, true);
+        when(service.search(
+                        any(), any(), any(), any(), any(), any(), eq(0), eq(20), any(Sort.class)))
+                .thenReturn(pageResponse);
 
         mockMvc.perform(get("/api/v1/certificates"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(id.toString()));
+                .andExpect(jsonPath("$.content[0].id").value(id.toString()));
     }
 
     @Test
