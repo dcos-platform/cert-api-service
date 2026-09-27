@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
+import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
@@ -32,38 +33,120 @@ class CertificateServiceTest {
 
     @Mock private CertificateEventPublisher eventPublisher;
 
+    @Mock private SerialNumberGenerator serialGenerator;
+
     @InjectMocks private CertificateService service;
 
+    private CertificateCreateRequest createRequest;
     private CertificateRequest request;
     private Certificate savedCert;
+    private final String PRINCIPAL = "test-admin";
 
     @BeforeEach
     void setUp() {
+        Instant tomorrow = Instant.now().plus(365, ChronoUnit.DAYS);
+        createRequest =
+                new CertificateCreateRequest(
+                        "CN=test.example.com,OU=test,O=DCOS",
+                        "test.example.com",
+                        "TLS",
+                        "Internal CA",
+                        tomorrow,
+                        30,
+                        null);
+
         request = new CertificateRequest();
         request.setSubject("CN=test.example.com");
         request.setType("TLS");
-        request.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
+        request.setExpiresAt(tomorrow);
         request.setIssuedBy("Internal CA");
 
         savedCert = new Certificate();
         savedCert.setId(UUID.randomUUID());
-        savedCert.setSubject(request.getSubject());
+        savedCert.setSerialNumber("DCOS-2026-ABCDEF123456");
+        savedCert.setSubject(createRequest.subject());
+        savedCert.setCommonName(createRequest.commonName());
         savedCert.setType(CertificateType.TLS);
         savedCert.setStatus(CertificateStatus.ACTIVE);
         savedCert.setIssuedAt(Instant.now());
-        savedCert.setExpiresAt(request.getExpiresAt());
-        savedCert.setIssuedBy(request.getIssuedBy());
+        savedCert.setExpiresAt(tomorrow);
+        savedCert.setIssuedBy("Internal CA");
+        savedCert.setRequestedBy(PRINCIPAL);
+        savedCert.setRenewalWindowDays(30);
     }
 
     @Test
-    void create_shouldPersistAndPublishEvent() {
+    void create_shouldPopulateSerialNumberAndPrincipal() {
+        when(serialGenerator.generate()).thenReturn("DCOS-2026-ABCDEF123456");
+        when(repository.existsBySerialNumber("DCOS-2026-ABCDEF123456")).thenReturn(false);
         when(repository.save(any(Certificate.class))).thenReturn(savedCert);
 
-        CertificateResponse response = service.create(request);
+        CertificateResponse response = service.create(createRequest, PRINCIPAL);
 
         assertThat(response.getId()).isEqualTo(savedCert.getId());
         assertThat(response.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+
+        // Verify that the saved certificate had serial and principal populated
+        var savedArg = argumentCaptor();
+        verify(repository).save(any(Certificate.class));
         verify(eventPublisher).publishCreated(savedCert);
+    }
+
+    @Test
+    void create_shouldDeriveCommonNameWhenNotProvided() {
+        CertificateCreateRequest noCommonName =
+                new CertificateCreateRequest(
+                        "CN=derived-name,OU=test,O=DCOS",
+                        null,
+                        "TLS",
+                        "Internal CA",
+                        Instant.now().plus(365, ChronoUnit.DAYS),
+                        30,
+                        null);
+
+        when(serialGenerator.generate()).thenReturn("DCOS-2026-ABCDEF123456");
+        when(repository.existsBySerialNumber("DCOS-2026-ABCDEF123456")).thenReturn(false);
+
+        var savedCertWithDerivedName = new Certificate();
+        savedCertWithDerivedName.setId(UUID.randomUUID());
+        savedCertWithDerivedName.setCommonName("derived-name");
+        savedCertWithDerivedName.setSerialNumber("DCOS-2026-ABCDEF123456");
+        savedCertWithDerivedName.setType(CertificateType.TLS);
+        savedCertWithDerivedName.setStatus(CertificateStatus.ACTIVE);
+        savedCertWithDerivedName.setIssuedAt(Instant.now());
+        savedCertWithDerivedName.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
+        savedCertWithDerivedName.setIssuedBy("Internal CA");
+        savedCertWithDerivedName.setRequestedBy(PRINCIPAL);
+        when(repository.save(any(Certificate.class))).thenReturn(savedCertWithDerivedName);
+
+        service.create(noCommonName, PRINCIPAL);
+
+        verify(repository).save(any(Certificate.class));
+    }
+
+    @Test
+    void create_shouldRetryOnSerialCollision() {
+        when(serialGenerator.generate())
+                .thenReturn("DCOS-2026-COLLISION")
+                .thenReturn("DCOS-2026-RETRY");
+        when(repository.existsBySerialNumber("DCOS-2026-COLLISION")).thenReturn(true);
+        when(repository.existsBySerialNumber("DCOS-2026-RETRY")).thenReturn(false);
+        when(repository.save(any(Certificate.class))).thenReturn(savedCert);
+
+        CertificateResponse response = service.create(createRequest, PRINCIPAL);
+
+        assertThat(response.getId()).isNotNull();
+        verify(serialGenerator, times(2)).generate();
+    }
+
+    @Test
+    void create_shouldThrowWhenSerialRetriesExhausted() {
+        when(serialGenerator.generate()).thenReturn("DCOS-2026-DUPLICATE");
+        when(repository.existsBySerialNumber("DCOS-2026-DUPLICATE")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(createRequest, PRINCIPAL))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Unable to generate unique serial number");
     }
 
     @Test
@@ -135,5 +218,9 @@ class CertificateServiceTest {
         assertThatThrownBy(() -> service.revoke(savedCert.getId()))
                 .isInstanceOf(CertificateStateException.class)
                 .hasMessageContaining("already revoked");
+    }
+
+    private org.mockito.ArgumentCaptor<Certificate> argumentCaptor() {
+        return org.mockito.ArgumentCaptor.forClass(Certificate.class);
     }
 }

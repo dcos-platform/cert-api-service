@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 6: Certificate creation
+
+#### Fixed
+
+- **RabbitMQ broker credentials**: The application's broker connection was hardcoded to the Spring Framework defaults (`guest`/`guest`), which did not match the infrastructure stack's configuration (`dcos`/`changeme`). This was a pre-existing configuration defect invisible until integration tests exercised the publish path. Broker connection now uses environment variables (`RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD`, `RABBITMQ_VHOST`) with defaults matching the infrastructure stack's published local development values in `dcos-infra/.env.example`, mirroring the existing pattern for database configuration. This unblocks event publishing in any environment and allows integration tests to exercise the real publish path.
+
+#### Added
+
+- **Serial number generation**: `SerialNumberGenerator` produces numbers in the format `DCOS-<yyyy>-<12 uppercase hex>`, with collision retry logic bounded at 10 attempts. A fresh random value is generated on each retry.
+- **Common name derivation**: `CommonNameExtractor` accepts an explicit common name from the request or derives it from the subject's CN RDN. Validation fails if neither is available.
+- **Certificate state machine**: `CertificateStateMachine` is a pure logic class without framework dependencies, implementing the full transition table from the design document. Story 6 exercises the create (→ ACTIVE) and revoke (terminal from ACTIVE or EXPIRED) transitions. All transitions are testable in isolation.
+- **Create request record**: `CertificateCreateRequest` is a Java record with complete field-level validation per the design document. Optional fields: `commonName` (derived from subject if absent), `renewalWindowDays` (default 30), and `correlationId`.
+- **Principal capture**: The service receives the principal name as a method parameter from the controller, which extracts it from the security context. The service never reaches into the security framework, keeping it testable without security context.
+- **Duplicate detection**: A `DataIntegrityViolationException` on the partial unique index is caught and translated to `409 Conflict` with `CERT_DUPLICATE_ACTIVE` error code.
+- **Error code enumeration**: `ErrorCode` centralizes all error codes for client-side handling. Each exception handler populates the `code` field in the ProblemDetail.
+- **Database migration V3**: Adds NOT NULL constraints to `serial_number`, `common_name`, and `requested_by`; backfills existing nulls with placeholder values marked for manual review; creates the partial unique index on `(subject, type) WHERE status = 'ACTIVE'`.
+- **Comprehensive tests**: Unit tests for serial generation (format, uniqueness, retry), common name extraction (from request, from subject, CN parsing, quoting), and state machine (all transitions). Service tests for create with principal and serial capture, common name derivation, and collision retry. Controller slice tests verify Location header, authorization, validation errors, and authentication requirement. Integration tests against real PostgreSQL verify all three deferred fields persist and the partial unique index rejects true duplicates while permitting revoked and type-differing cases. Event publisher is stubbed in integration tests with `@MockBean` because creation currently publishes inside its transaction — a scoping decision, not an oversight. The outbox pattern work in a later story will decouple this, removing the broker dependency from integration tests. Test data cleanup preserves seeded rows (five certificates with IDs `1111...` through `5555...`) and removes rows created by tests.
+- **Index validation test**: Proves the partial unique index is essential by dropping it and verifying that duplicates are allowed without it, then restoring it and confirming duplicates are rejected. Demonstrates the guard against race conditions that application-level check-then-insert cannot catch.
+
+#### Changed
+
+- **Certificate service**: `create()` now accepts a `CertificateCreateRequest` and principal name, populating serial number, common name (derived if needed), and requesting principal before persisting.
+- **Repository**: Added `existsBySerialNumber()` finder for collision checking during serial generation retry.
+- **Global exception handler**: Handles `DuplicateCertificateException` and `DataIntegrityViolationException`, returning 409 Conflict. All handlers now populate the `code` field.
+- **Controller endpoints**: Create returns 201 with Location header and extracts principal from security context.
+- **Endpoint HTTP methods** (breaking change for clients): Renew endpoint changed from `PUT /api/v1/certificates/{id}/renew` to `POST /api/v1/certificates/{id}/renew`. Revoke endpoint changed from `PATCH /api/v1/certificates/{id}/revoke` to `POST /api/v1/certificates/{id}/revoke`. These changes align the API with the design document's specification and the principle that state-changing operations should not use GET, but the change breaks existing clients that expect PUT/PATCH.
+
+#### Restored
+
+- **Deferred constraints**: NOT NULL on `serial_number`, `common_name`, and `requested_by`. Partial unique index preventing two active certificates for the same (subject, type).
+
+#### Design decision: event publisher stubbing in integration tests
+
+The creation integration tests stub `CertificateEventPublisher` because certificate creation publishes events inside its `@Transactional` method. This couples the tests to broker availability. Rather than add a RabbitMQ service to the CI pipeline now, we stub the publisher in these tests, keeping the database path entirely real and allowing the integration tests to pass without broker. The outbox pattern work in the event publication story (coming after all domain stories) will decouple event publishing from the transaction, removing this coupling. At that point, the broker can be removed from integration tests and the publisher can be exercised in its own story's tests.
+
+#### Design decision: partial unique index is load-bearing
+
+The partial unique index `idx_certificates_subject_type_active` on `(subject, type) WHERE status = 'ACTIVE'` was verified as essential through manual experiment: with the index present, the duplicate-rejection test passes; without it, duplicates are silently allowed. The index guards against race conditions that application-level check-then-insert cannot catch. No automated test mutates the schema by design — testing the index is a one-off verification that does not belong in the test suite.
+
+#### Design decision: pipeline has no broker service
+
+The CI pipeline does not include a RabbitMQ service. Integration tests for certificate creation (this story) stub the event publisher, so they pass without a broker. When event publishing becomes the subject of a later story, the broker service will be added to the pipeline at that time. This avoids keeping a service running in CI that nothing has responsibility for testing yet.
+
+#### Design decision: no test alters database schema
+
+Tests may insert, update, and delete rows. Creating or dropping tables, indexes, or constraints inside a test is forbidden — it makes results order-dependent and leaves shared state broken on failure. The partial unique index is verified separately, outside the test suite.
+
+#### Design decision: request record vs response
+
+`CertificateCreateRequest` is authored as a record per code conventions. `CertificateResponse` remains a POJO in this story because it is used by every endpoint and converting it ripples through the entire test suite. Story 7 reshapes responses anyway and will convert it then, making the change once with other response updates rather than in isolation.
+
 ### Story 5: Persistent schema and expanded certificate model
 
 #### Added

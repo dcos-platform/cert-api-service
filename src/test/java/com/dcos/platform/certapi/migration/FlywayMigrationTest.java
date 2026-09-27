@@ -43,8 +43,8 @@ class FlywayMigrationTest {
         MigrateResult result = flyway.migrate();
 
         assertThat(result.success).isTrue();
-        assertThat(result.migrationsExecuted).isEqualTo(2);
-        assertThat(result.targetSchemaVersion).isEqualTo("2");
+        assertThat(result.migrationsExecuted).isEqualTo(3);
+        assertThat(result.targetSchemaVersion).isEqualTo("3");
     }
 
     @Test
