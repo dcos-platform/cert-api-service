@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 7: Certificate search and pagination
+
+#### Added
+
+- **Dynamic filtering**: `CertificateSpecifications` provides composable JPA `Specification` factories for status, type, orchestration status, issuedBy, commonName substring matching, and expiring-before-date filtering. Each specification returns null when its filter is absent, enabling clean composition via `Specification.where(...).and(...)`.
+- **Paginated list endpoint**: GET `/api/v1/certificates` supports `page` (0-indexed), `size`, and `sort` query parameters for pagination and sorting. Responses use the new `PageResponse<T>` generic record containing content, page number, page size, total elements, total pages, and boolean flags for first and last page.
+- **Sort field allowlist**: `SortableField` enum restricts sorting to a fixed set (createdAt, expiresAt, issuedAt, commonName, subject, status, type), preventing arbitrary or injected sort parameters from reaching the database.
+- **Expiring-soon endpoint**: GET `/api/v1/certificates/expiring` returns certificates expiring within a configurable window (default 30 days), supporting the same filtering and pagination as the general list endpoint for operational awareness.
+- **Response record conversion**: `CertificateResponse` is now a record with 19 fields (including serialNumber, commonName, orchestrationStatus, renewalWindowDays, daysUntilExpiry computed at mapping time, revokedAt, revocationReason, revocationComment, requestedBy, correlationId, renewalCount, lastError, createdAt, updatedAt), replacing the previous POJO and providing cleaner immutability and string representation.
+- **Comprehensive search tests**: `CertificateSpecificationsTest` (12 unit tests) covers null/present branches of each specification factory. `CertificateSearchIntegrationTest` (5 integration tests) exercises filtering by status, case-insensitive commonName substring search, paging boundary conditions, expiry window search, and sort ordering against real data.
+
+#### Changed
+
+- **CertificateRepository**: Now implements `JpaSpecificationExecutor<Certificate>` for dynamic filtering via `CertificateSpecifications`.
+- **CertificateService**: `list()` method now accepts filter criteria (status, type, orchestration status, issuedBy, commonName, expiring window) and pagination parameters, returning a paginated `PageResponse<CertificateResponse>`.
+- **CertificateController**: Exposes seven endpoints (up from five): POST `/api/v1/certificates` (create), GET `/api/v1/certificates` (list with filtering/paging/sorting), GET `/api/v1/certificates/{id}` (by id), GET `/api/v1/certificates/expiring` (expiring soon), POST `/api/v1/certificates/{id}/renew` (renew), POST `/api/v1/certificates/{id}/revoke` (revoke).
+
+#### Design decision: specification composition and null returns
+
+Each `CertificateSpecifications` factory method returns null when its filter is absent, allowing clean composition chains like `Specification.where(spec1).and(spec2).and(spec3)`. JPA's `and()` and `or()` methods handle null gracefully, composing only present predicates. This avoids building conditional chains in Java and keeps the filter logic close to the domain model.
+
+#### Design decision: daysUntilExpiry as a computed field
+
+`daysUntilExpiry` is not persisted; it is computed at mapping time from `expiresAt` and the current date. This avoids stale values in responses and keeps the entity lightweight while giving clients the information they need for expiry UI presentation.
+
 ### Story 6: Certificate creation
 
 #### Fixed
@@ -51,9 +76,9 @@ The CI pipeline does not include a RabbitMQ service. Integration tests for certi
 
 Tests may insert, update, and delete rows. Creating or dropping tables, indexes, or constraints inside a test is forbidden — it makes results order-dependent and leaves shared state broken on failure. The partial unique index is verified separately, outside the test suite.
 
-#### Design decision: request record vs response
+#### Design decision: request record
 
-`CertificateCreateRequest` is authored as a record per code conventions. `CertificateResponse` remains a POJO in this story because it is used by every endpoint and converting it ripples through the entire test suite. Story 7 reshapes responses anyway and will convert it then, making the change once with other response updates rather than in isolation.
+`CertificateCreateRequest` is authored as a record per code conventions.
 
 ### Story 5: Persistent schema and expanded certificate model
 

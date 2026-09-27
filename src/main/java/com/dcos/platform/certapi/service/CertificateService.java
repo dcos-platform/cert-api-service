@@ -3,18 +3,25 @@ package com.dcos.platform.certapi.service;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.CertificateType;
+import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.PageResponse;
 import com.dcos.platform.certapi.event.CertificateEventPublisher;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
+import com.dcos.platform.certapi.repository.CertificateSpecifications;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -92,6 +99,94 @@ public class CertificateService {
         return repository.findAll().stream()
                 .map(CertificateResponse::from)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Retrieves certificates with filtering, paging, and sorting.
+     *
+     * @param status filter by certificate status, or null
+     * @param type filter by certificate type, or null
+     * @param commonName filter by common name (case-insensitive substring), or null
+     * @param issuedBy filter by issuing authority, or null
+     * @param orchestrationStatus filter by orchestration status, or null
+     * @param expiringBefore filter by expiry instant, or null
+     * @param page page number (0-indexed)
+     * @param size page size
+     * @param sort Spring Sort object for ordering
+     * @return a PageResponse containing the filtered certificates
+     */
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @Transactional(readOnly = true)
+    public PageResponse<CertificateResponse> search(
+            CertificateStatus status,
+            CertificateType type,
+            String commonName,
+            String issuedBy,
+            OrchestrationStatus orchestrationStatus,
+            Instant expiringBefore,
+            int page,
+            int size,
+            Sort sort) {
+        Specification<Certificate> spec =
+                Specification.where(CertificateSpecifications.hasStatus(status))
+                        .and(CertificateSpecifications.hasType(type))
+                        .and(CertificateSpecifications.hasCommonNameContaining(commonName))
+                        .and(CertificateSpecifications.hasIssuedBy(issuedBy))
+                        .and(CertificateSpecifications.hasOrchestrationStatus(orchestrationStatus))
+                        .and(CertificateSpecifications.expiringBefore(expiringBefore));
+
+        PageRequest pageRequest = PageRequest.of(page, size, sort);
+        Page<Certificate> result = repository.findAll(spec, pageRequest);
+
+        List<CertificateResponse> content =
+                result.getContent().stream()
+                        .map(CertificateResponse::from)
+                        .collect(Collectors.toList());
+
+        return new PageResponse<>(
+                content,
+                page,
+                size,
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.isFirst(),
+                result.isLast());
+    }
+
+    /**
+     * Retrieves active certificates expiring within a given number of days.
+     *
+     * @param withinDays number of days to look ahead (1-365)
+     * @param page page number (0-indexed)
+     * @param size page size
+     * @return a PageResponse containing the expiring certificates
+     */
+    @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+    @Transactional(readOnly = true)
+    public PageResponse<CertificateResponse> findExpiring(int withinDays, int page, int size) {
+        Instant expiringBefore = Instant.now().plusSeconds((long) withinDays * 86400);
+
+        Specification<Certificate> spec =
+                Specification.where(CertificateSpecifications.hasStatus(CertificateStatus.ACTIVE))
+                        .and(CertificateSpecifications.expiringBefore(expiringBefore));
+
+        Sort sort = Sort.by(Sort.Order.asc("expiresAt"));
+        PageRequest pageRequest = PageRequest.of(page, size, sort);
+        Page<Certificate> result = repository.findAll(spec, pageRequest);
+
+        List<CertificateResponse> content =
+                result.getContent().stream()
+                        .map(CertificateResponse::from)
+                        .collect(Collectors.toList());
+
+        return new PageResponse<>(
+                content,
+                page,
+                size,
+                result.getTotalElements(),
+                result.getTotalPages(),
+                result.isFirst(),
+                result.isLast());
     }
 
     @PreAuthorize("hasRole('ADMIN')")

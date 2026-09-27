@@ -83,8 +83,8 @@ class CertificateServiceTest {
 
         CertificateResponse response = service.create(createRequest, PRINCIPAL);
 
-        assertThat(response.getId()).isEqualTo(savedCert.getId());
-        assertThat(response.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+        assertThat(response.id()).isEqualTo(savedCert.getId());
+        assertThat(response.status()).isEqualTo(CertificateStatus.ACTIVE);
 
         // Verify that the saved certificate had serial and principal populated
         var savedArg = argumentCaptor();
@@ -135,7 +135,7 @@ class CertificateServiceTest {
 
         CertificateResponse response = service.create(createRequest, PRINCIPAL);
 
-        assertThat(response.getId()).isNotNull();
+        assertThat(response.id()).isNotNull();
         verify(serialGenerator, times(2)).generate();
     }
 
@@ -155,8 +155,8 @@ class CertificateServiceTest {
 
         CertificateResponse response = service.getById(savedCert.getId());
 
-        assertThat(response.getId()).isEqualTo(savedCert.getId());
-        assertThat(response.getSubject()).isEqualTo(savedCert.getSubject());
+        assertThat(response.id()).isEqualTo(savedCert.getId());
+        assertThat(response.subject()).isEqualTo(savedCert.getSubject());
     }
 
     @Test
@@ -175,7 +175,7 @@ class CertificateServiceTest {
         List<CertificateResponse> responses = service.getAll();
 
         assertThat(responses).hasSize(1);
-        assertThat(responses.get(0).getId()).isEqualTo(savedCert.getId());
+        assertThat(responses.get(0).id()).isEqualTo(savedCert.getId());
     }
 
     @Test
@@ -185,7 +185,7 @@ class CertificateServiceTest {
 
         CertificateResponse response = service.renew(savedCert.getId(), request);
 
-        assertThat(response.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+        assertThat(response.status()).isEqualTo(CertificateStatus.ACTIVE);
         verify(eventPublisher).publishRenewed(savedCert);
     }
 
@@ -206,7 +206,7 @@ class CertificateServiceTest {
 
         CertificateResponse response = service.revoke(savedCert.getId());
 
-        assertThat(response.getStatus()).isEqualTo(CertificateStatus.REVOKED);
+        assertThat(response.status()).isEqualTo(CertificateStatus.REVOKED);
         verify(eventPublisher).publishRevoked(any(Certificate.class));
     }
 

@@ -1,5 +1,7 @@
 package com.dcos.platform.certapi.exception;
 
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import java.net.URI;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -12,6 +14,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -73,6 +76,42 @@ public class GlobalExceptionHandler {
                         HttpStatus.CONFLICT, "A data constraint was violated");
         problem.setType(URI.create("https://errors.dcos.local/cert-api/constraint-violation"));
         problem.setProperty("code", ErrorCode.CERT_CONSTRAINT_VIOLATION.name());
+        return problem;
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ProblemDetail handleConstraintViolation(ConstraintViolationException ex) {
+        Map<String, String> errors =
+                ex.getConstraintViolations().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        v -> v.getPropertyPath().toString(),
+                                        ConstraintViolation::getMessage,
+                                        (a, b) -> a));
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "Validation failed");
+        problem.setType(URI.create("https://errors.dcos.local/cert-api/validation-error"));
+        problem.setProperty("code", ErrorCode.CERT_VALIDATION_FAILED.name());
+        problem.setProperty("errors", errors);
+        return problem;
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ProblemDetail handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String message = "Invalid value for parameter '" + ex.getName() + "': " + ex.getValue();
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, message);
+        problem.setType(URI.create("https://errors.dcos.local/cert-api/invalid-parameter"));
+        problem.setProperty("code", ErrorCode.CERT_INVALID_PARAMETER.name());
+        return problem;
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
+        log.warn("Invalid argument: {}", ex.getMessage());
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setType(URI.create("https://errors.dcos.local/cert-api/invalid-parameter"));
+        problem.setProperty("code", ErrorCode.CERT_INVALID_PARAMETER.name());
         return problem;
     }
 
