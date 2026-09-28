@@ -4,6 +4,59 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 9: Lifecycle event publication
+
+#### Added
+
+- **Transactional outbox pattern**: Outbox table and `Outbox` entity for reliable event publication. Events are enqueued in the same transaction as the aggregate, eliminating race conditions where the service crashes after the aggregate is saved but before publishing. A scheduled relay claims pending rows with pessimistic locking, publishes them, and marks them sent. Failed publishes increment the attempt count and are retried; when the configurable maximum is reached, the row is marked failed and logged at error level.
+- **Outbox migration V5**: Creates the outbox table with event_id (unique), aggregate_id, event_type, routing_key, payload (JSONB), state, attempt_count, last_error, created_at, and sent_at columns. Includes a partial index over pending rows for efficient claiming.
+- **OutboxEnqueueService**: Builds event envelopes, serializes them with the AMQP object mapper (snake_case), and writes outbox rows inside the caller's transaction. No service method calls the broker directly.
+- **OutboxRelay**: Scheduled component that claims a bounded batch of pending rows, publishes each, and marks them sent. On failure, increments attempts and records the error. At the configurable maximum (default 3), marks the row failed and logs at error level.
+- **Event type enum and records**: `EventType` enum with routing keys (cert.created, cert.renewed, cert.revoked, cert.expired); `CertificateEventPayload` record carrying source, schema_version, certificate_id, subject, type, status; `CertificateEventEnvelope` record carrying event_id, certificate_id, occurred_at, and payload (the wire contract).
+- **Snake_case AMQP mapper**: Separate `ObjectMapper` bean with snake_case naming strategy and ISO-8601 timestamps, configured only for AMQP message conversion. The HTTP API mapper remains camelCase.
+- **Publisher confirms and returns**: RabbitTemplate configured with confirm callback and return callback to handle negative acknowledgements and returned messages.
+- **Rewritten topology**: Dead-letter exchange and queue for undeliverable messages. Consumer queues declared durable with no arguments (matching Python orchestrator's declaration). Both certificate.lifecycle.events (orchestrator) and cert.lifecycle.events (admin service) bound to the topic exchange with pattern cert.#.
+- **Event history endpoint**: GET /api/v1/certificates/{id}/events, paged, returning event id, type, state, attempts, and created/sent timestamps. Not found for an unknown certificate.
+- **OutboxEventResponse DTO**: Record for event history responses with eventId, eventType, state, attempts, createdAt, sentAt.
+- **Contract tests**: `EventEnvelopeSerializationTest` verifies that each event type is serialized to snake_case JSON with ISO-8601 timestamps and payload as an object (not a string—the double-encoding trap).
+- **Integration tests**: `OutboxIntegrationTest` proves that (1) a rolled-back transaction leaves no outbox row, (2) a committed transaction writes both certificate and outbox in the same transaction, and (3) payload is valid JSON. `EventHistoryEndpointTest` verifies the endpoint's response shape, paging, and not-found handling.
+- **RabbitMQ in CI**: GitHub Actions workflow extended with a rabbitmq:3.13-alpine service container with credentials matching the test configuration and a health check.
+- **Application configuration**: Added cert-api.outbox properties for relay interval (5000ms), batch size (10), and max attempts (3). Added cert-api.rabbitmq routing-key.expired for the new event type.
+- **Test configuration**: No broker required for integration tests that don't genuinely exercise publishing. The topology and relay tests use a real broker; others do not.
+
+#### Changed
+
+- **CertificateService**: No longer injects `CertificateEventPublisher`. Injects `OutboxEnqueueService` instead. Create, renew, revoke, and expire now enqueue events to the outbox rather than publishing directly.
+- **CertificateExpirySweep**: Injects `OutboxEnqueueService` and enqueues an EXPIRED event when expiring certificates.
+- **RabbitMqConfig**: Rewritten to create the snake_case AMQP mapper, configure publisher confirms, and declare the new consumer queues and dead-letter exchange/queue. Old queue declarations (cert.created.queue, cert.renewed.queue, cert.revoked.queue) removed.
+- **Test mocks**: Integration tests for creation, search, and expiry sweep now mock `OutboxEnqueueService` instead of `CertificateEventPublisher`, allowing outbox enqueue calls to be verified and preventing broker dependency.
+- **CI workflow**: RabbitMQ service container added with health check.
+
+#### Removed
+
+- **CertificateEvent and CertificateEventPublisher**: Both become unreferenced after outbox integration and are deleted. The publisher's whole design (direct publish) is the defect being fixed.
+- **Three obsolete queue declarations**: cert.created.queue, cert.renewed.queue, cert.revoked.queue no longer exist; they were declared but never consumed and are the scope failure in the original design.
+
+#### Design decision: separate snake_case mapper
+
+The AMQP converter uses a separate ObjectMapper configured for snake_case serialization and ISO-8601 timestamps. The HTTP API mapper remains unchanged (camelCase), so changing the global mapper is avoided. This isolation keeps message contracts decoupled from REST API contracts and prevents silent breakage of all endpoints.
+
+#### Design decision: payload column holds serialized JSON
+
+The outbox payload column stores serialized JSON (the envelope, already stringified). Publishing it directly as the message body bypasses the converter, avoiding double-encoding. This is the critical detail that prevents a class of silent failures where the orchestrator rejects the message without explanation.
+
+#### Design decision: explicit message building
+
+Rather than use `convertAndSend()` on a Java object, the relay builds the message explicitly—body from the payload bytes, properties set directly—and publishes with `send()`. This ensures the payload is not processed through the converter (which would double-encode it).
+
+#### Design decision: relayed events are required to be resent
+
+Events are not persisted to the outbox as a happy-path optimization; they are always relayed. This ensures every event goes through the same guarantee path and there is no second-class path where events skip the outbox.
+
+#### Design decision: retry ceiling, not exponential backoff
+
+The relay has a simple attempt ceiling (default 3) rather than exponential backoff. It is simpler, works well for transient failures, and avoids the delayed-message plugin which is not available in the infrastructure image.
+
 ### Story 8: Certificate lifecycle transitions
 
 #### Added

@@ -29,7 +29,7 @@ class CertificateExpirySweepIntegrationTest {
 
     @Autowired private CertificateExpirySweep sweep;
 
-    @MockBean private com.dcos.platform.certapi.event.CertificateEventPublisher eventPublisher;
+    @MockBean private com.dcos.platform.certapi.event.OutboxEnqueueService outboxEnqueueService;
 
     private static final String PRINCIPAL = "sweep-test-admin";
     private static final String ISSUER = "Sweep Test Authority";
