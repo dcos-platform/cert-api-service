@@ -4,8 +4,10 @@ import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.info.License;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -16,6 +18,8 @@ public class OpenApiConfig {
     public OpenAPI certApiOpenAPI() {
         final String securitySchemeName = "basicAuth";
         return new OpenAPI()
+                .addServersItem(
+                        new Server().url("http://localhost:8080").description("Local development"))
                 .info(
                         new Info()
                                 .title("Cert API Service")
@@ -25,7 +29,8 @@ public class OpenApiConfig {
                                         new Contact()
                                                 .name("DCOS Platform")
                                                 .url(
-                                                        "https://github.com/dcos-platform/cert-api-service")))
+                                                        "https://github.com/dcos-platform/cert-api-service"))
+                                .license(new License().name("MIT")))
                 .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))
                 .components(
                         new Components()

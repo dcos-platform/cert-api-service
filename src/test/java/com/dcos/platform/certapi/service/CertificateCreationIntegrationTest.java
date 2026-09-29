@@ -7,6 +7,7 @@ import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.CertificateResponse;
+import com.dcos.platform.certapi.dto.RenewalRequest;
 import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.repository.CertificateRepository;
@@ -240,5 +241,54 @@ class CertificateCreationIntegrationTest {
         assertThat(tls.id()).isNotEqualTo(client.id());
         assertThat(tls.status()).isEqualTo(CertificateStatus.ACTIVE);
         assertThat(client.status()).isEqualTo(CertificateStatus.ACTIVE);
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void renewalOfExpiredCertificateConflictsWhenActiveDuplicateExists() {
+        String subject1 = uniqueSubject();
+        String subject2 = uniqueSubject(); // Use different subjects to avoid constraint violation
+
+        CertificateCreateRequest request1 =
+                new CertificateCreateRequest(
+                        subject1,
+                        "active-cert",
+                        "TLS",
+                        ISSUER,
+                        Instant.now().plus(100, ChronoUnit.DAYS),
+                        30,
+                        null);
+
+        // Create the first (active) certificate
+        CertificateResponse active = service.create(request1, PRINCIPAL);
+
+        // Create a second expired certificate with a different subject
+        CertificateCreateRequest request2 =
+                new CertificateCreateRequest(
+                        subject2,
+                        "expired-cert",
+                        "TLS",
+                        ISSUER,
+                        Instant.now().plus(5, ChronoUnit.DAYS),
+                        30,
+                        null);
+
+        CertificateResponse expired = service.create(request2, PRINCIPAL);
+
+        // Manually transition the second to EXPIRED and update its subject to match the first
+        Optional<Certificate> cert = repository.findById(expired.id());
+        assertThat(cert).isPresent();
+        cert.get().setStatus(CertificateStatus.EXPIRED);
+        cert.get().setSubject(subject1); // Now it has same subject as the active one
+        repository.save(cert.get());
+
+        // Now attempt to renew the expired certificate: should conflict because the first
+        // (active) one with the same subject and type exists
+        RenewalRequest renewalRequest = new RenewalRequest();
+        renewalRequest.setExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
+        renewalRequest.setRenewalWindowDays(30);
+
+        assertThatThrownBy(() -> service.renew(expired.id(), renewalRequest))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

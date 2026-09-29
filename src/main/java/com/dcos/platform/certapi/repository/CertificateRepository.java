@@ -2,6 +2,7 @@ package com.dcos.platform.certapi.repository;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
+import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -40,4 +41,15 @@ public interface CertificateRepository
      */
     List<Certificate> findByStatusAndExpiresAtBefore(
             CertificateStatus status, Instant now, Pageable pageable);
+
+    /**
+     * Finds certificates stuck in orchestration pending state before a given cutoff time.
+     *
+     * @param orchestrationStatus the orchestration status (PENDING)
+     * @param cutoff the time threshold
+     * @param pageable pagination parameters
+     * @return list of stale pending certificates
+     */
+    List<Certificate> findByOrchestrationStatusAndUpdatedAtBefore(
+            OrchestrationStatus orchestrationStatus, Instant cutoff, Pageable pageable);
 }
