@@ -16,3 +16,8 @@ spring:
     scheduling:
       # Disable scheduled tasks in tests to prevent interference with test data.
       enabled: false
+  rabbitmq:
+    listener:
+      simple:
+        # Disable listener auto-startup in tests to prevent consuming from the live broker.
+        auto-startup: false

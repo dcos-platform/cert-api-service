@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 10: Completion event consumption and orchestration timeout handling
+
+#### Added
+
+- **Completion event listener**: `CompletionListener` consumes completion events from the orchestrator (from queue `certificate.lifecycle.completions`), validates certificate UUID format, inserts an inbox record (`ProcessedCompletion`) for idempotency (primary-key collision signals duplicate delivery), and updates the certificate's orchestration status and error. Ignores unknown certificate IDs (logs and acknowledges) to avoid infinite retry loops.
+- **ProcessedCompletion entity and repository**: Domain model and repository for the completion inbox table (created in migration V6), using manually-assigned event ID as primary key. Duplicate deliveries are detected via primary-key collision.
+- **Inbox table migration V6**: Creates `processed_completions` table with columns: `event_id` (VARCHAR, primary key), `certificate_id` (UUID, foreign key to certificates), `created_at` (TIMESTAMP). Includes index on certificate_id for lookups by certificate.
+- **Completion event contract**: `CompletionEvent` record carries event_id, certificate_id (as string), status (enum: completed/failed), retry_count, and optional error message. Contract-tested for JSON serialization with snake_case field names.
+- **Orchestration timeout sweep**: `OrchestrationTimeoutSweep` is a scheduled component (configurable interval, default 60 seconds via `cert-api.orchestration.sweep-interval-ms`) that sweeps certificates stuck in PENDING state for longer than a configurable timeout (default 2 minutes via `cert-api.orchestration.pending-timeout`). Moves stale pending certificates to FAILED with explicit error reason, leaving only orchestration_status and last_error modified (certificate status is never touched).
+- **Bounded retry configuration**: `completionListenerContainerFactory` bean wires stateful retry with exponential backoff (3 max attempts, 1s initial, 2x multiplier) via `RetryTemplate` and custom error handler. Conversion errors and failed retries are republished to the dead-letter exchange for inspection.
+- **Custom error handler and dead-letter integration**: Conditional error handler checks for conversion errors and listener execution failures; when detected, republishes to the DLX via `RepublishMessageRecoverer` for centralized dead-letter queue inspection.
+- **Comprehensive tests**: Unit tests with mocks verify successful/failed completions, duplicate idempotency, invalid UUID rejection, unknown certificate rejection, and retry-suffix preservation. Integration tests against real PostgreSQL and RabbitMQ verify message round-trip, duplicate handling, outbox compatibility (non-ASCII subjects), and timeout sweep behavior.
+
+#### Changed
+
+- **RabbitMqConfig**: Added completion listener container factory, dead-letter exchange/queue, error handler, and retry template. Added `completions-queue` configuration. Snake_case AMQP mapper reused from Story 9.
+
+#### Design decision: conflict-free duplicate detection
+
+Duplicate detection uses `ProcessedCompletionRepository.insertIfAbsent`, a native `INSERT ... ON CONFLICT (event_id) DO NOTHING` statement, rather than a JPA entity save wrapped in a try/catch. Catching a `DataIntegrityViolationException` from a normal save does not work here: Spring's JPA exception translation marks the enclosing transaction rollback-only the instant the exception occurs, regardless of where it is caught, so the transaction can never commit successfully afterward — it only surfaces later as an `UnexpectedRollbackException` when the transaction tries to commit. The `ON CONFLICT DO NOTHING` statement never throws for a duplicate; it simply reports zero affected rows, so a duplicate completion is a clean, exception-free no-op and the message is acknowledged normally instead of being dead-lettered. `CompletionInboxService.recordProcessed` wraps this call.
+
+#### Design decision: inbox-first ordering
+
+Duplicates are detected by attempting the inbox insert first. Only if successful (no collision) is the certificate looked up and updated. This ordering ensures even a message arriving between the first and second completions for the same certificate is safely ignored.
+
+#### Design decision: unknown certificate IDs are acknowledged
+
+When a certificate ID is not found in the database, the message is acknowledged without requeue. This prevents infinite retry loops for orphaned event IDs (e.g., certificate deleted after creation but before completion). Such events are logged at WARN level for operational investigation but do not block the listener.
+
+#### Design decision: retry ceiling, not exponential backoff
+
+Same as Story 9: the retry template uses a simple attempt ceiling (default 3) rather than exponential backoff. It is simpler and works well for transient failures. The retry interceptor is stateful and requires a message ID to correlate attempts; the orchestrator's completion messages do not carry one, so retry behavior depends on Spring AMQP's default message-ID field handling.
+
 ### Story 9: Lifecycle event publication
 
 #### Added

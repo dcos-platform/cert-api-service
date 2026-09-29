@@ -10,7 +10,7 @@ currently exist. It does not contain rules or constraints; those live in claude.
 
 ## Current Implementation State
 
-Stories 1–9 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. Story 7 (Certificate search and pagination) adds dynamic filtering, sorting, and paginated listing with composable JPA specifications. Story 8 (Certificate lifecycle transitions) implements renewal and revocation with proper state validation, an expiry sweep, and a database consistency constraint. Story 9 (Lifecycle event publication) implements the transactional outbox pattern, a scheduled relay, snake_case serialization for the wire contract, and event history endpoint. The service now has:
+Stories 1–10 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. Story 7 (Certificate search and pagination) adds dynamic filtering, sorting, and paginated listing with composable JPA specifications. Story 8 (Certificate lifecycle transitions) implements renewal and revocation with proper state validation, an expiry sweep, and a database consistency constraint. Story 9 (Lifecycle event publication) implements the transactional outbox pattern, a scheduled relay, snake_case serialization for the wire contract, and event history endpoint. Story 10 (Orchestrator completion consumption) implements the CompletionListener, ProcessedCompletion inbox for idempotency, OrchestrationTimeoutSweep scheduled job, dead-letter recovery, and comprehensive tests reaching ≥80% coverage on new code. The service now has:
 - A REST controller exposing seven endpoints for certificate lifecycle operations: POST create (returns 201 with Location header), GET list with filtering/paging/sorting, GET by id, GET /expiring, POST renew, POST revoke. Search supports filtering by status, type, orchestration status, issuedBy, commonName substring, and expiry window; sorting is restricted to a fixed allow-list (createdAt, expiresAt, issuedAt, commonName, subject, status, type) to prevent injection
 - A Flyway-managed PostgreSQL schema with three migrations. V3 (Story 6) enforces NOT NULL on serial_number, common_name, requested_by and adds a partial unique index on (subject, type) WHERE status = 'ACTIVE'
 - A full `Certificate` entity with all fields non-nullable where required
@@ -73,9 +73,10 @@ src/
 - **controller/**: REST API layer
   - CertificateController: Eight endpoints (POST create, GET list with filtering/paging/sorting, GET by id, GET /expiring, GET event history, POST renew, POST revoke) with OpenAPI annotations
   - SortableField: Enum restricting sort fields to a fixed allow-list (createdAt, expiresAt, issuedAt, commonName, subject, status, type), preventing arbitrary or injected sort parameters
-- **domain/**: Persistent entity and enumerations
+- **domain/**: Persistent entities and enumerations
   - Certificate: JPA entity mapped to `certificates`. Uses Lombok @Getter/@Setter/@NoArgsConstructor, with no equals/hashCode/toString. Has @Version optimistic locking; Hibernate sets the creation and update timestamps
   - Outbox: JPA entity mapped to `outbox`. Models the transactional outbox table for lifecycle events: carries event_id (unique), aggregate_id (certificate id), event_type, routing_key, payload (serialized JSON string), state, attempt_count, last_error, created_at, sent_at
+  - ProcessedCompletion: JPA entity mapped to `processed_completions`. Inbox record for completion event idempotency: carries event_id (primary key, varchar 255 to store retry suffixes), certificate_id (UUID), processed_at (auto-generated timestamp)
   - CertificateStatus: ACTIVE, EXPIRED, REVOKED
   - CertificateType: TLS, CLIENT, CA, CODE_SIGNING
   - OrchestrationStatus: PENDING, PROCESSING, COMPLETED, FAILED (orchestrator-owned axis; PROCESSING currently unreachable)
@@ -86,12 +87,14 @@ src/
   - CertificateResponse: Record with 19 fields including serialNumber, commonName, orchestrationStatus, renewalWindowDays, daysUntilExpiry (computed at mapping time), revokedAt, revocationReason, revocationComment, requestedBy, correlationId, renewalCount, lastError, createdAt, updatedAt
   - OutboxEventResponse: Record for event history endpoint, carrying eventId, eventType, state, attempts, createdAt, sentAt
   - PageResponse<T>: Generic paginated response record (content, page, size, totalElements, totalPages, first, last)
-- **event/**: Event publishing and outbox infrastructure
+- **event/**: Event publishing, outbox infrastructure, and completion consumption
   - EventType: Enum with routing keys (cert.created, cert.renewed, cert.revoked, cert.expired)
   - CertificateEventPayload: Record carrying source, schema_version, certificate_id, subject, type, status
   - CertificateEventEnvelope: Record carrying event_id, certificate_id, occurred_at, payload (the wire contract)
   - OutboxEnqueueService: Builds envelopes, serializes with the AMQP mapper (snake_case), enqueues to outbox
   - OutboxRelay: Scheduled component claiming pending rows, publishing, marking sent; retries with attempt ceiling
+  - CompletionEvent: Record carrying eventId, certificateId, status (lowercase "completed"/"failed"), retryCount, error from orchestrator
+  - CompletionListener: RabbitMQ consumer for certificate.lifecycle.completions queue; validates and applies completion status updates to certificates; uses ProcessedCompletion inbox for idempotency (PK collision = duplicate); rejects unknown certificate IDs to avoid retry loops
 - **exception/**: Custom exception types and global handler
   - CertificateNotFoundException: Thrown when a certificate lookup fails
   - CertificateStateException: Thrown when an operation is invalid for the certificate's current state (e.g., revoking an already-revoked cert)
@@ -100,10 +103,12 @@ src/
   - CertificateRepository: JpaRepository interface implementing JpaSpecificationExecutor<Certificate> for dynamic filtering, with custom finders (by status, by subject substring)
   - CertificateSpecifications: JPA Specification factory for composable filter predicates (status, type, orchestration status, issuedBy, commonName substring, expiringBefore), each returning null when its filter is absent so they compose via Specification.where(...).and(...)
   - OutboxRepository: JpaRepository interface for the transactional outbox table, with custom methods claimPending(batchSize) for claiming unpublished rows with pessimistic locking (FOR UPDATE SKIP LOCKED), and findByAggregateIdOrderByCreatedAtDesc(certificateId, pageable) for event history queries
+  - ProcessedCompletionRepository: JpaRepository interface for the processed_completions inbox table; primary key is event_id (String) to allow retry suffixes
 - **service/**: Business logic
   - CertificateService: Orchestrates persistence and event publication; implements state validation and role-based authorization via @PreAuthorize annotations. Renewal validates new expiry is strictly later, updates only validity fields, and increments renewal count. Revocation sets revokedAt timestamp along with reason and comment.
   - CertificateStateMachine: Pure logic (no dependencies) implementing the full synchronous status state table (ACTIVE, EXPIRED, REVOKED). Validates renewal and revocation transitions; computes expiry transition.
   - CertificateExpirySweep: Scheduled component (disabled in tests) that sweeps ACTIVE certificates past expiry to EXPIRED status in batches, iterating and saving per certificate to respect optimistic locking.
+  - OrchestrationTimeoutSweep: Scheduled component that sweeps certificates stuck in PENDING orchestration state for longer than the configured timeout (default 2 minutes). Moves stale pending certificates to FAILED with reason "orchestration timed out"; only modifies orchestration_status and last_error, never the certificate's own status.
 - **validation/**: Custom validation annotation
   - ValidCertificateType: Constraint annotation for allowed certificate types
   - CertificateTypeValidator: Implementation of the constraint
@@ -114,7 +119,7 @@ src/
 - V3__restore_deferred_constraints.sql: Adds NOT NULL to serial_number, common_name, requested_by with backfill. Creates partial unique index on (subject, type) WHERE status = 'ACTIVE'.
 - V4__restore_revocation_consistency.sql: Backfills revokedAt (to now()) on any revoked row lacking a timestamp, clears revokedAt from non-revoked rows, then adds check `(status = 'REVOKED') = (revoked_at IS NOT NULL)` to enforce the consistency constraint at the database level.
 - V5__create_outbox_table.sql: creates the `outbox` table with identity, event_id (unique), aggregate_id, event_type, routing_key, payload (TEXT—serialized JSON), state, attempt_count, last_error, created_at, sent_at. Includes a partial index over pending rows for efficient claiming and an index on aggregate_id for history queries.
-- Not yet created: the processed-completions table (Story 10).
+- V6__create_processed_completions_table.sql: creates the `processed_completions` table with event_id (primary key, varchar 255 to store retry suffixes), certificate_id (UUID), and processed_at (auto-generated timestamp). Enables idempotency for completion event consumption via primary-key collision detection.
 
 **Configuration file** (src/main/resources/application.yml):
 - The datasource targets the shared `dcos` database through POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, and POSTGRES_PASSWORD. The defaults match dcos-infra's .env.example
@@ -141,8 +146,8 @@ src/
 
 ## What Does Not Yet Exist
 
-The following will arrive in future stories:
-- **Completion consumer**: Nothing listens for orchestrator completions yet. The processed-completions table and CompletionListener arrive with Story 10
+Future stories may include:
+- **API hardening**: Additional validation, rate limiting, or other defensive measures
 
 ## Dependencies and Tooling
 
@@ -165,7 +170,7 @@ The following will arrive in future stories:
 
 Work proceeds as a sequence of numbered stories. Each story branches from main, delivers its own tests, and is merged before the next story begins. Each story updates this document to reflect the new state of the repository.
 
-Stories 1–8 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, certificate creation, certificate search and pagination, and certificate lifecycle transitions. The remaining stories are lifecycle event publication (9) and completion consumption and API hardening (10).
+Stories 1–10 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, certificate creation, certificate search and pagination, certificate lifecycle transitions, lifecycle event publication, and orchestrator completion consumption with ≥80% test coverage on new code.
 
 ## Intended Use of This Document
 
