@@ -187,6 +187,88 @@ networks:
 
 Ensure the dcos-infra stack has created the `dcos-net` bridge network beforehand.
 
+## Logging and Correlation
+
+### Log Format
+
+The service emits **structured JSON logs** in production (when running with the `prod` profile) and **human-readable text logs** in development (the default).
+
+#### Development Profile (Default)
+
+```
+2026-09-28 14:32:45.123 [main] INFO  com.dcos.platform.certapi.service.CertificateService [550e8400-e29b-41d4-a716-446655440000] - Certificate created: id=11111111-1111-4111-8111-111111111111
+```
+
+Each log line includes:
+- **Timestamp**: ISO-8601 with milliseconds
+- **Thread**: Thread name (e.g., `[main]`, `[scheduler-1]`)
+- **Level**: INFO, WARN, ERROR, DEBUG
+- **Logger**: Fully qualified class name
+- **Correlation ID**: In brackets, if present in the MDC
+- **Message**: The log statement with parameterized values
+
+#### Production Profile (`prod`)
+
+When running with `--spring.profiles.active=prod`, logs are emitted as JSON objects suitable for log aggregation services:
+
+```json
+{
+  "timestamp": "2026-09-28T14:32:45.123Z",
+  "level": "INFO",
+  "thread": "main",
+  "logger": "com.dcos.platform.certapi.service.CertificateService",
+  "message": "Certificate created",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "certificateId": "11111111-1111-4111-8111-111111111111",
+  "severity": 20000
+}
+```
+
+### Correlation Identifiers
+
+Every HTTP request receives a **correlation identifier** (UUID) at the earliest point in request handling. If the caller supplies an `x-correlation-id` header, that value is used; otherwise, a new ID is generated. The correlation ID is:
+
+1. **Stored in the logging context (MDC)** — all log lines emitted during request handling automatically include it.
+2. **Echoed in the response header** — returned as `x-correlation-id` so the caller can correlate their request with server logs.
+3. **Captured on published events** — stored on outbox rows so messages include the same correlation ID in their `x-correlation-id` header, enabling cross-service tracing through the entire request–publish–consume chain.
+4. **Restored by the completion listener** — when processing completion events from the orchestrator, the listener restores the correlation ID from the inbound message header into MDC for the duration of handling, with a fallback to the certificate's own correlation ID if the header is absent.
+
+### Log Levels
+
+- **INFO**: Lifecycle transitions (certificate creation, renewal, revocation, expiry), event publication, and completion handling. These mark significant state changes and are useful for audit trails.
+- **WARN**: Retries and client errors (invalid certificates, missing references, duplicate deliveries). These indicate expected recoverable conditions.
+- **ERROR**: Server errors and resource exhaustion (outbox publish failures after all retries, database errors). These warrant investigation.
+- **DEBUG**: Entry and exit of major operations; logged at development level only. Disable in production to reduce volume.
+
+### Example Flow: Request → Publish → Consume
+
+1. Client sends:
+   ```
+   POST /api/v1/certificates -H "x-correlation-id: client-request-123"
+   ```
+
+2. Filter establishes correlation ID and populates MDC:
+   ```
+   2026-09-28 14:32:45.123 [http-nio-8080-exec-1] INFO ... [client-request-123] - Correlation ID established
+   ```
+
+3. Service publishes event with correlation ID on outbox row:
+   ```
+   2026-09-28 14:32:45.234 [http-nio-8080-exec-1] INFO ... [client-request-123] - Certificate created: id=...
+   ```
+
+4. Relay publishes message with correlation header:
+   ```
+   2026-09-28 14:32:47.456 [cert-api-relay-executor] INFO ... - Message published: event_id=..., correlation_id=client-request-123
+   ```
+
+5. Completion listener restores correlation and processes message:
+   ```
+   2026-09-28 14:33:02.789 [executor-pool-1] INFO ... [client-request-123] - Completion event received: certificateId=..., status=completed
+   ```
+
+All log lines in this flow can be filtered by `correlationId=client-request-123` to trace the entire request.
+
 ## Schema and Data Model
 
 The service stores three tables in the shared `dcos` PostgreSQL database, under the `dcos_certificates` schema:

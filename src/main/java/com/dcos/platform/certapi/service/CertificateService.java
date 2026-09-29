@@ -14,6 +14,7 @@ import com.dcos.platform.certapi.event.EventType;
 import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
+import com.dcos.platform.certapi.logging.LoggingContext;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.repository.CertificateSpecifications;
 import com.dcos.platform.certapi.repository.OutboxRepository;
@@ -21,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -90,7 +92,12 @@ public class CertificateService {
         cert.setSerialNumber(generateSerialWithRetry());
 
         Certificate saved = repository.save(cert);
-        outboxEnqueueService.enqueue(saved, EventType.CREATED);
+        try (MDC.MDCCloseable ignored =
+                        MDC.putCloseable(LoggingContext.CERTIFICATE_ID, saved.getId().toString());
+                MDC.MDCCloseable ignored2 =
+                        MDC.putCloseable(LoggingContext.PRINCIPAL, principalName)) {
+            outboxEnqueueService.enqueue(saved, EventType.CREATED);
+        }
         return CertificateResponse.from(saved);
     }
 

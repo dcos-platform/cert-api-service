@@ -49,7 +49,7 @@ class CompletionListenerTest {
 
         CompletionEvent event =
                 new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
-        listener.consume(event);
+        listener.consume(event, null);
 
         ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
         verify(certificateRepository).save(captor.capture());
@@ -75,7 +75,7 @@ class CompletionListenerTest {
 
         CompletionEvent event =
                 new CompletionEvent(eventId, certId.toString(), "failed", 0, errorMsg);
-        listener.consume(event);
+        listener.consume(event, null);
 
         ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
         verify(certificateRepository).save(captor.capture());
@@ -95,7 +95,7 @@ class CompletionListenerTest {
 
         CompletionEvent event =
                 new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
-        listener.consume(event);
+        listener.consume(event, null);
 
         verify(certificateRepository, never()).findById(any());
         verify(certificateRepository, never()).save(any());
@@ -108,7 +108,7 @@ class CompletionListenerTest {
         String invalidUuid = "not-a-valid-uuid";
 
         CompletionEvent event = new CompletionEvent(eventId, invalidUuid, "completed", 0, null);
-        listener.consume(event);
+        listener.consume(event, null);
 
         verify(certificateRepository, never()).findById(any());
         verify(certificateRepository, never()).save(any());
@@ -126,7 +126,7 @@ class CompletionListenerTest {
 
         CompletionEvent event =
                 new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
-        listener.consume(event);
+        listener.consume(event, null);
 
         verify(certificateRepository, never()).save(any());
     }
@@ -145,7 +145,7 @@ class CompletionListenerTest {
         when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
 
         CompletionEvent event = new CompletionEvent(eventId, certId.toString(), "unknown", 0, null);
-        listener.consume(event);
+        listener.consume(event, null);
 
         ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
         verify(certificateRepository).save(captor.capture());
@@ -169,7 +169,7 @@ class CompletionListenerTest {
 
         CompletionEvent event =
                 new CompletionEvent(retryEventId, certId.toString(), "completed", 1, null);
-        listener.consume(event);
+        listener.consume(event, null);
 
         verify(inboxService).recordProcessed(eq(retryEventId), eq(certId));
     }

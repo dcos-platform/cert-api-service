@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 11: Structured logging and correlation
+
+#### Added
+
+- **Structured JSON logging**: logstash-logback-encoder 7.4 dependency added and pinned for production JSON output.
+- **Logback configuration**: Two profiles in logback-spring.xml—plain-text pattern for development (default) including correlation ID in brackets, and JSON profile for deployment using logstash encoder with MDC fields included.
+- **Correlation filter**: `CorrelationFilter` servlet filter at highest precedence reads incoming `x-correlation-id` header, generates a UUID when absent, places it in MDC, echoes it on the response, and clears MDC in a finally block to prevent leaks across pooled threads.
+- **Logging context constants**: `LoggingContext` constants for MDC key names (correlationId, certificateId, eventId, principal) and service name, avoiding string literals at call sites.
+- **Correlation capture in outbox**: `OutboxEnqueueService` now captures the correlation ID from MDC when enqueueing, with fallback to the certificate's correlation ID (for operations like the expiry sweep that run without request context), and stores it on the outbox row.
+- **Correlation propagation in published messages**: `OutboxRelay` uses the stored correlation ID in the message `x-correlation-id` header (falling back to event ID when absent), fixing the defect where every message had a unique correlation ID and cross-service tracing was impossible.
+- **Correlation restoration in completion listener**: `CompletionListener` restores the correlation ID from the inbound `x-correlation-id` header into MDC for the duration of handling, with fallback to the certificate's correlation ID when the header is absent, and clears MDC in a finally block.
+- **Outbox correlation column**: Migration V7 adds correlation_id column (varchar 36, nullable) to the outbox table. Existing rows leave it null; new rows store the correlation ID.
+- **MDC context population**: CertificateService populates MDC with certificate ID and principal during operations for richer log context.
+- **Comprehensive tests for correlation**: Filter tests verify preserved headers, generated IDs, MDC population during handling, and cleanup in finally blocks. Outbox integration tests verify correlation ID capture from MDC and fallback to certificate ID. Outbox relay unit tests verify the stored correlation ID is used in message headers and fallback to event ID when absent.
+
+#### Changed
+
+- **pom.xml**: Added logstash-logback-encoder version property (7.4) and dependency.
+- **logback configuration**: Replaces the minimal application.yml logging section with full Logback configuration supporting multiple profiles.
+- **Outbox domain**: Added correlationId field to Outbox entity.
+- **CompletionListener**: Accepts optional `x-correlation-id` header parameter, restores correlation context during message handling, and clears it in finally block.
+
+#### Design decision: correlation fallback strategy
+
+When a request has no MDC correlation ID (e.g., the expiry sweep running on a scheduler), the outbox enqueue captures the certificate's own correlationId field. This ensures even scheduled operations can be correlated by certificate. Similarly, the completion listener falls back to certificate ID when the inbound header is absent—a log line correlatable by certificate is far better than one correlatable by nothing. The relay falls back to the event ID to prevent null headers.
+
+#### Design decision: MDC cleanup in finally blocks
+
+Both the filter and completion listener clear MDC in finally blocks, even when handlers throw exceptions. Failing to clear leaks identifiers across requests on pooled threads, producing log lines incorrectly attributed to the wrong request—a bug that is very hard to diagnose later. The finally block ensures cleanup always occurs.
+
+#### Design decision: production profile, not environment-specific overrides
+
+The logstash encoder and JSON format are active only under the `prod` profile, not driven by environment variables or complex conditional logic. This keeps the default behavior (readable local logs) and the production behavior (structured JSON) clearly separated and testable.
+
 ### Story 10: Completion event consumption and orchestration timeout handling
 
 #### Added

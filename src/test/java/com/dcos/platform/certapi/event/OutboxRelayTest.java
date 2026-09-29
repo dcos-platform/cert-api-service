@@ -13,8 +13,11 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -129,6 +132,42 @@ class OutboxRelayTest {
         assertThat(row1.getAttemptCount()).isEqualTo(1);
         assertThat(row2.getState()).isEqualTo(OutboxState.SENT);
         assertThat(row2.getSentAt()).isNotNull();
+    }
+
+    @Test
+    void usesStoredCorrelationIdInMessageHeader() {
+        String correlationId = "stored-correlation-id";
+        Outbox row = createPendingOutbox();
+        row.setCorrelationId(correlationId);
+        when(outboxRepository.claimPending(10)).thenReturn(Collections.singletonList(row));
+
+        relay.relay();
+
+        ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(rabbitTemplate)
+                .send(eq("test.exchange"), eq(row.getRoutingKey()), messageCaptor.capture());
+
+        Message sentMessage = messageCaptor.getValue();
+        MessageProperties props = sentMessage.getMessageProperties();
+        assertThat((String) props.getHeader("x-correlation-id")).isEqualTo(correlationId);
+        assertThat((String) props.getHeader("x-correlation-id")).isNotEqualTo(row.getEventId());
+    }
+
+    @Test
+    void fallsBackToEventIdWhenCorrelationIdNull() {
+        Outbox row = createPendingOutbox();
+        row.setCorrelationId(null);
+        when(outboxRepository.claimPending(10)).thenReturn(Collections.singletonList(row));
+
+        relay.relay();
+
+        ArgumentCaptor<Message> messageCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(rabbitTemplate)
+                .send(eq("test.exchange"), eq(row.getRoutingKey()), messageCaptor.capture());
+
+        Message sentMessage = messageCaptor.getValue();
+        MessageProperties props = sentMessage.getMessageProperties();
+        assertThat((String) props.getHeader("x-correlation-id")).isEqualTo(row.getEventId());
     }
 
     private Outbox createPendingOutbox() {

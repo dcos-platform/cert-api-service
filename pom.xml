@@ -21,6 +21,7 @@
     <properties>
         <java.version>21</java.version>
         <springdoc.version>2.5.0</springdoc.version>
+        <logstash-logback-encoder.version>7.4</logstash-logback-encoder.version>
         <sonar.projectKey>dcos-platform_cert-api-service</sonar.projectKey>
         <sonar.organization>dcos-platform-sonar-key</sonar.organization>
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
@@ -85,6 +86,13 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>${logstash-logback-encoder.version}</version>
         </dependency>
 
         <!-- Test -->
