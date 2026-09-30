@@ -113,7 +113,7 @@ cp .env.example .env
 docker-compose up -d
 ```
 
-This starts PostgreSQL (5432), RabbitMQ (5672, management UI on 15672), and Adminer (8080).
+This starts PostgreSQL (5432), RabbitMQ (5672, management UI on 15672), and Adminer (8080). On Windows, run these `docker` commands from PowerShell or Command Prompt, not Git Bash (Git Bash rewrites container paths).
 
 ### Create the Test Database
 
@@ -138,12 +138,18 @@ If the test database is unreachable, tests fail with a "TEST DATABASE UNAVAILABL
 mvn spring-boot:run
 ```
 
-The service starts on port 8080. Swagger UI is at `http://localhost:8080/swagger-ui.html`.
+The service starts on port 8080 by default. **When the dcos-infra stack is running**, Adminer (the database UI) occupies host port 8080, so the service cannot bind. To start on an alternative port:
+
+```bash
+SERVER_PORT=8081 mvn spring-boot:run
+```
+
+Spring Boot's relaxed binding accepts `SERVER_PORT` as an environment variable; no configuration file change is needed. Swagger UI is then at `http://localhost:8081/swagger-ui.html`.
 
 ### Quick Test
 
 ```bash
-curl -u admin:changeme http://localhost:8080/api/v1/certificates
+curl -u admin:changeme http://localhost:8081/api/v1/certificates
 ```
 
 ### Run Tests
@@ -158,6 +164,70 @@ All tests use the dedicated test database (integration tests) or mocks (unit and
 - Web-slice tests of controller status codes and validation
 - Repository tests against real PostgreSQL (schema validation, constraints, queries)
 - Integration tests against real PostgreSQL and RabbitMQ (end-to-end completion consumption, event publishing)
+
+### End-to-End Verification with the Orchestrator
+
+This procedure runs cert-api together with the Python orchestrator (`cert-orchestrator-service`, a sibling repository) against the shared dcos-infra stack. It has been run end to end: the case-insensitive status comparison in `CompletionListener` was confirmed against the orchestrator's real completions, all of which carry `status` in uppercase.
+
+**Expected outcome:** a certificate is created as `status=ACTIVE` with `orchestrationStatus=PENDING`. Within seconds (about twelve in the reference run) the same certificate reads `status=ACTIVE`, `orchestrationStatus=COMPLETED` and no `lastError`. `status` never changes: cert-api owns `status`, and the orchestrator influences only `orchestrationStatus`.
+
+#### 1. Start the infrastructure stack
+
+Start the dcos-infra stack (PostgreSQL, RabbitMQ, Adminer). Run all `docker` commands from **PowerShell or Command Prompt on Windows, not Git Bash**. Git Bash rewrites container paths, which produces errors that look like Docker failures but are path conversion.
+
+#### 2. Prepare the orchestrator
+
+- **Create its database.** The infrastructure stack creates only the shared `dcos` database. The orchestrator's own database must be created manually before its migrations run.
+- **Apply its Alembic migrations.** The orchestrator's migrations currently cannot run unmodified because of two defects on its side, reported to that repository. This procedure assumes its migrations have already been applied; consult the orchestrator repository for the current status.
+- **Supply both connection strings** through the orchestrator's `CERT_ORCH_` environment prefix:
+  - `CERT_ORCH_RABBITMQ_URL`, for example `amqp://<user>:<password>@localhost:5672/`. The default carries no credentials and is refused by the shared broker.
+  - `CERT_ORCH_DATABASE_URL`, for example `postgresql+psycopg://<user>:<password>@localhost:5432/<orchestrator-db>`. The default has neither credentials nor the right host.
+
+Then start the orchestrator (in the reference run it ran in a container) and confirm it is consuming.
+
+#### 3. Start cert-api on port 8081
+
+Adminer occupies host port 8080 while the stack is up, so cert-api cannot bind its default port. Set the server port through the environment; Spring Boot's relaxed binding accepts it with no configuration change:
+
+```bash
+SERVER_PORT=8081 mvn spring-boot:run
+```
+
+#### 4. Create a certificate
+
+```bash
+curl -X POST http://localhost:8081/api/v1/certificates \
+  -H "Content-Type: application/json" \
+  -u admin:changeme \
+  -d '{
+    "subject": "CN=e2e-verify,OU=platform,O=DCOS",
+    "type": "TLS",
+    "issuedBy": "DCOS Demo Authority",
+    "expiresAt": "2027-12-31T00:00:00Z"
+  }'
+```
+
+The response shows `status=ACTIVE`, `orchestrationStatus=PENDING` and a generated serial number. Note the returned `id`.
+
+#### 5. Checkpoints at each hop
+
+| Hop | What to observe |
+| --- | --- |
+| Outbox | An outbox row for the certificate exists, written in the same transaction as the creation. |
+| Relay to broker | The relay publishes to the `cert.events` exchange, routed to `certificate.lifecycle.events`. |
+| Orchestrator | `certificate.lifecycle.events` shows 0 messages and 1 consumer: the orchestrator consumed and validated the event and processed it to `COMPLETED`. |
+| Completion | The orchestrator publishes on `certificate.lifecycle.completions`. Any backlog on that queue drains to 0, with one `processed_completions` row per completion consumed. |
+| Final state | `GET /api/v1/certificates/{id}` returns `status=ACTIVE`, `orchestrationStatus=COMPLETED`, no `lastError`. |
+
+```bash
+curl -u admin:changeme http://localhost:8081/api/v1/certificates/<id>
+```
+
+Queue depths and consumer counts are visible in the RabbitMQ management UI.
+
+### Migration Safety
+
+Flyway manages all schema changes. If you edit a migration file *after it has been applied to the shared database*, the service will not boot: Flyway reports a checksum mismatch on that migration version. The message points at the migration file, but the cause is the state of the database, which recorded the original checksum. Restore the file to its applied content, or rebuild the schema. Never edit an applied migration; add a new one instead.
 
 ## Compose Snippet for External Services
 

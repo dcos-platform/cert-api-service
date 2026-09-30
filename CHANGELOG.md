@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 12: End-to-end verification against the orchestrator
+
+#### Fixed
+
+- **Status comparison case-sensitivity defect**: The `CompletionListener` was comparing completion status against hardcoded lowercase literals ("completed", "failed"), but the Python orchestrator emits uppercase status values. Status comparison is now case-insensitive via `toLowerCase()`, allowing the listener to accept both cases. This eliminates silent failures where completion events arrive but fail to update certificate state.
+
+#### Added
+
+- **End-to-end verification procedure** in the README: infrastructure start, orchestrator prerequisites (separate database created manually, both connection strings via the `CERT_ORCH_` prefix, Alembic migrations required upstream), cert-api on an alternative port, certificate creation, and the checkpoints at each hop (outbox, queue depths and consumers, orchestration status transition).
+- **Port requirement**: cert-api must run with `SERVER_PORT=8081` while the dcos-infra stack is up, because Adminer occupies host port 8080.
+- **Migration caution**: editing a Flyway migration after it has been applied leaves the service unbootable with a checksum mismatch until the schema is rebuilt.
+- **Port requirement documentation**: Running cert-api when the dcos-infra stack is active requires `SERVER_PORT=8081` to avoid collision with Adminer on port 8080.
+- **Migration safety guidance**: Caution about Flyway checksum detection when migrations are edited after being applied to the database.
+
+#### Changed
+
+- **Test fixtures for realistic contracts**: All integration tests now send uppercase status values (COMPLETED, FAILED) matching the actual orchestrator behavior, catching the case-sensitivity bug rather than masking it with lowercase fixtures.
+
+#### Acceptance verification
+
+- Full `mvn clean verify` exits zero with all 214 tests passing
+- Line coverage: 712 covered / 735 total = 96.87%
+- Status comparison is case-insensitive; tests reflect uppercase contract from real orchestrator
+- Cross-service integration verified by a live run rather than by contract assertion alone: a certificate was created as `ACTIVE`/`PENDING` and about twelve seconds later read `ACTIVE`/`COMPLETED` with no last error. Every completion arrived with `status` in uppercase, confirming the case fix was necessary. `status` never changed, so the ownership boundary held across services
+
 ### Story 11: Structured logging and correlation
 
 #### Added
