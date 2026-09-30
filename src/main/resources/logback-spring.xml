@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <springProfile name="!prod">
+        <!-- Development profile: human-readable plain text output (default) -->
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [%X{correlationId}] - %msg%n</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+
+        <logger name="com.dcos.platform.certapi" level="INFO"/>
+    </springProfile>
+
+    <springProfile name="prod">
+        <!-- Production profile: structured JSON output -->
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <charset>UTF-8</charset>
+                <fieldNames>
+                    <timestamp>timestamp</timestamp>
+                    <version>version</version>
+                    <levelValue>severity</levelValue>
+                    <level>level</level>
+                    <threadName>thread</threadName>
+                    <loggerName>logger</loggerName>
+                    <message>message</message>
+                    <exception>exception</exception>
+                </fieldNames>
+                <includeMdcX>true</includeMdcX>
+                <includeContext>false</includeContext>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+
+        <logger name="com.dcos.platform.certapi" level="INFO"/>
+    </springProfile>
+</configuration>

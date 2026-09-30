@@ -1,6 +1,7 @@
 package com.dcos.platform.certapi.event;
 
 import com.dcos.platform.certapi.domain.Outbox;
+import com.dcos.platform.certapi.logging.LoggingContext;
 import com.dcos.platform.certapi.repository.OutboxRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -29,7 +30,6 @@ public class OutboxRelay {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
     private static final String CONTENT_TYPE = "application/json";
-    private static final String CORRELATION_ID_HEADER = "x-correlation-id";
     private static final String SCHEMA_VERSION_HEADER = "x-schema-version";
 
     private final OutboxRepository outboxRepository;
@@ -93,7 +93,9 @@ public class OutboxRelay {
         properties.setContentType(CONTENT_TYPE);
         properties.setDeliveryMode(MessageProperties.DEFAULT_DELIVERY_MODE);
         properties.setMessageId(row.getEventId());
-        properties.setHeader(CORRELATION_ID_HEADER, row.getEventId());
+        String correlationId =
+                row.getCorrelationId() != null ? row.getCorrelationId() : row.getEventId();
+        properties.setHeader(LoggingContext.CORRELATION_HEADER, correlationId);
         properties.setHeader(
                 SCHEMA_VERSION_HEADER, String.valueOf(CertificateEventPayload.SCHEMA_VERSION));
 

@@ -4,14 +4,17 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.Outbox;
+import com.dcos.platform.certapi.logging.LoggingContext;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.repository.OutboxRepository;
 import com.dcos.platform.certapi.support.CertificateFixtures;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -132,5 +135,57 @@ class OutboxIntegrationTest {
         assertThat(rows)
                 .extracting(Outbox::getEventType)
                 .containsExactlyInAnyOrder(EventType.CREATED.name(), EventType.REVOKED.name());
+    }
+
+    @Test
+    @Transactional
+    void capturesCorrelationIdFromMdcWhenEnqueuing() {
+        String correlationId = UUID.randomUUID().toString();
+        MDC.put(LoggingContext.CORRELATION_ID, correlationId);
+        try {
+            Certificate cert = CertificateFixtures.active();
+            Certificate saved = certificateRepository.save(cert);
+            enqueueService.enqueue(saved, EventType.CREATED);
+
+            List<Outbox> rows = outboxRepository.findAll();
+            assertThat(rows).hasSize(1);
+            assertThat(rows.get(0).getCorrelationId()).isEqualTo(correlationId);
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    @Test
+    @Transactional
+    void fallsBackToCertificateCorrelationIdWhenMdcAbsent() {
+        UUID certCorrelationId = UUID.randomUUID();
+        Certificate cert = CertificateFixtures.active();
+        cert.setCorrelationId(certCorrelationId);
+        Certificate saved = certificateRepository.save(cert);
+        enqueueService.enqueue(saved, EventType.CREATED);
+
+        List<Outbox> rows = outboxRepository.findAll();
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getCorrelationId()).isEqualTo(certCorrelationId.toString());
+    }
+
+    @Test
+    @Transactional
+    void prefersMdcCorrelationIdOverCertificateCorrelationId() {
+        String mdcCorrelationId = UUID.randomUUID().toString();
+        UUID certCorrelationId = UUID.randomUUID();
+        MDC.put(LoggingContext.CORRELATION_ID, mdcCorrelationId);
+        try {
+            Certificate cert = CertificateFixtures.active();
+            cert.setCorrelationId(certCorrelationId);
+            Certificate saved = certificateRepository.save(cert);
+            enqueueService.enqueue(saved, EventType.CREATED);
+
+            List<Outbox> rows = outboxRepository.findAll();
+            assertThat(rows).hasSize(1);
+            assertThat(rows.get(0).getCorrelationId()).isEqualTo(mdcCorrelationId);
+        } finally {
+            MDC.clear();
+        }
     }
 }

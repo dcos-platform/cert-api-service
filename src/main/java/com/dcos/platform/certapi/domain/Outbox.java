@@ -55,4 +55,7 @@ public class Outbox {
     private Instant createdAt;
 
     private Instant sentAt;
+
+    @Column(length = 36)
+    private String correlationId;
 }

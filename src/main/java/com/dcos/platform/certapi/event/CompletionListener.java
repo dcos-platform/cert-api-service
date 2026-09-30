@@ -2,12 +2,15 @@ package com.dcos.platform.certapi.event;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
+import com.dcos.platform.certapi.logging.LoggingContext;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,19 +32,17 @@ public class CompletionListener {
      * certificate ids (logs and acknowledges) to avoid infinite retry loops.
      *
      * @param event the completion event from the orchestrator
+     * @param correlationHeader the correlation header from the message, if present
      */
     @RabbitListener(
             queues = "${cert-api.rabbitmq.completions-queue:certificate.lifecycle.completions}",
             containerFactory = "completionListenerContainerFactory")
     @Transactional
-    public void consume(CompletionEvent event) {
-        log.info(
-                "Completion event received: eventId={}, certificateId={}, status={}",
-                event.eventId(),
-                event.certificateId(),
-                event.status());
-
-        // Validate certificate UUID format before inserting inbox record
+    public void consume(
+            CompletionEvent event,
+            @Header(name = LoggingContext.CORRELATION_HEADER, required = false)
+                    String correlationHeader) {
+        // Validate certificate UUID format early
         UUID certificateId;
         try {
             certificateId = UUID.fromString(event.certificateId());
@@ -52,23 +53,61 @@ public class CompletionListener {
             return;
         }
 
-        // Insert inbox record to mark this event as processed. A primary-key collision means
+        // Insert inbox record to mark this event as processed first. A primary-key collision means
         // the event has already been processed (duplicate delivery).
         if (!inboxService.recordProcessed(event.eventId(), certificateId)) {
             log.debug("Duplicate completion event: eventId={}", event.eventId());
             return;
         }
 
+        // Now fetch the certificate and set up correlation context
         Optional<Certificate> optionalCert = certificateRepository.findById(certificateId);
-        if (optionalCert.isEmpty()) {
-            log.warn(
-                    "Certificate not found for completion: certificateId={}, eventId={}",
-                    event.certificateId(),
-                    event.eventId());
-            return;
-        }
+        String contextCorrelationId = resolveCorrelationId(correlationHeader, optionalCert);
 
-        Certificate cert = optionalCert.get();
+        try {
+            MDC.put(LoggingContext.CORRELATION_ID, contextCorrelationId);
+
+            log.info(
+                    "Completion event received: eventId={}, certificateId={}, status={}",
+                    event.eventId(),
+                    event.certificateId(),
+                    event.status());
+
+            if (optionalCert.isEmpty()) {
+                log.warn(
+                        "Certificate not found for completion: certificateId={}, eventId={}",
+                        event.certificateId(),
+                        event.eventId());
+                return;
+            }
+
+            Certificate cert = optionalCert.get();
+            applyCompletionStatus(cert, event);
+
+            certificateRepository.save(cert);
+            log.info(
+                    "Certificate orchestration status updated: certificateId={}, status={}",
+                    event.certificateId(),
+                    event.status());
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    private String resolveCorrelationId(String header, Optional<Certificate> certificate) {
+        // Prefer header if provided and valid
+        if (LoggingContext.isValidCorrelationId(header)) {
+            return header;
+        }
+        // Fall back to certificate's correlation ID if present
+        if (certificate.isPresent() && certificate.get().getCorrelationId() != null) {
+            return certificate.get().getCorrelationId().toString();
+        }
+        // Generate new UUID if neither available
+        return UUID.randomUUID().toString();
+    }
+
+    private void applyCompletionStatus(Certificate cert, CompletionEvent event) {
         if (STATUS_COMPLETED.equals(event.status())) {
             cert.setOrchestrationStatus(OrchestrationStatus.COMPLETED);
             cert.setLastError(null);
@@ -76,11 +115,5 @@ public class CompletionListener {
             cert.setOrchestrationStatus(OrchestrationStatus.FAILED);
             cert.setLastError(event.error());
         }
-
-        certificateRepository.save(cert);
-        log.info(
-                "Certificate orchestration status updated: certificateId={}, status={}",
-                event.certificateId(),
-                event.status());
     }
 }

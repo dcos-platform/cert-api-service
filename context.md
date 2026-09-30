@@ -10,7 +10,7 @@ currently exist. It does not contain rules or constraints; those live in claude.
 
 ## Current Implementation State
 
-Stories 1–10 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. Story 7 (Certificate search and pagination) adds dynamic filtering, sorting, and paginated listing with composable JPA specifications. Story 8 (Certificate lifecycle transitions) implements renewal and revocation with proper state validation, an expiry sweep, and a database consistency constraint. Story 9 (Lifecycle event publication) implements the transactional outbox pattern, a scheduled relay, snake_case serialization for the wire contract, and event history endpoint. Story 10 (Orchestrator completion consumption) implements the CompletionListener, ProcessedCompletion inbox for idempotency, OrchestrationTimeoutSweep scheduled job, dead-letter recovery, and comprehensive tests reaching ≥80% coverage on new code. The service now has:
+Stories 1–11 are complete. Story 6 (Certificate creation) implements the create endpoint with serial number generation, common name derivation, and requesting principal capture. Story 7 (Certificate search and pagination) adds dynamic filtering, sorting, and paginated listing with composable JPA specifications. Story 8 (Certificate lifecycle transitions) implements renewal and revocation with proper state validation, an expiry sweep, and a database consistency constraint. Story 9 (Lifecycle event publication) implements the transactional outbox pattern, a scheduled relay, snake_case serialization for the wire contract, and event history endpoint. Story 10 (Orchestrator completion consumption) implements the CompletionListener, ProcessedCompletion inbox for idempotency, OrchestrationTimeoutSweep scheduled job, dead-letter recovery, and comprehensive tests reaching ≥80% coverage on new code. Story 11 (Structured logging and correlation) implements structured JSON logging for production, a servlet filter for correlation ID injection and MDC population, correlation ID capture in the outbox for cross-service tracing, and restoration in the completion listener. The service now has:
 - A REST controller exposing seven endpoints for certificate lifecycle operations: POST create (returns 201 with Location header), GET list with filtering/paging/sorting, GET by id, GET /expiring, POST renew, POST revoke. Search supports filtering by status, type, orchestration status, issuedBy, commonName substring, and expiry window; sorting is restricted to a fixed allow-list (createdAt, expiresAt, issuedAt, commonName, subject, status, type) to prevent injection
 - A Flyway-managed PostgreSQL schema with three migrations. V3 (Story 6) enforces NOT NULL on serial_number, common_name, requested_by and adds a partial unique index on (subject, type) WHERE status = 'ACTIVE'
 - A full `Certificate` entity with all fields non-nullable where required
@@ -70,6 +70,9 @@ src/
   - SecurityConfig: Role-based access control, stateless authentication, in-memory user store (ADMIN and USER)
   - RabbitMqConfig: Topic exchange, dead-letter exchange/queue, consumer queues (orchestrator and admin), snake_case AMQP mapper, publisher confirms/returns
   - OpenApiConfig: OpenAPI 3.0 schema with basic authentication scheme
+- **logging/**: Structured logging and correlation
+  - LoggingContext: Constants for MDC key names (correlationId, certificateId, eventId, principal, service name)
+  - CorrelationFilter: Servlet filter establishing correlation ID at the earliest point in request handling, populating MDC, echoing on the response, and clearing the context in a finally block to avoid leaks on pooled threads
 - **controller/**: REST API layer
   - CertificateController: Eight endpoints (POST create, GET list with filtering/paging/sorting, GET by id, GET /expiring, GET event history, POST renew, POST revoke) with OpenAPI annotations
   - SortableField: Enum restricting sort fields to a fixed allow-list (createdAt, expiresAt, issuedAt, commonName, subject, status, type), preventing arbitrary or injected sort parameters
@@ -91,10 +94,10 @@ src/
   - EventType: Enum with routing keys (cert.created, cert.renewed, cert.revoked, cert.expired)
   - CertificateEventPayload: Record carrying source, schema_version, certificate_id, subject, type, status
   - CertificateEventEnvelope: Record carrying event_id, certificate_id, occurred_at, payload (the wire contract)
-  - OutboxEnqueueService: Builds envelopes, serializes with the AMQP mapper (snake_case), enqueues to outbox
-  - OutboxRelay: Scheduled component claiming pending rows, publishing, marking sent; retries with attempt ceiling
+  - OutboxEnqueueService: Builds envelopes, serializes with the AMQP mapper (snake_case), captures the correlation ID from MDC (or falls back to the certificate's correlation ID if no request context exists, such as during the expiry sweep), enqueues to outbox with the correlation ID stored on the row
+  - OutboxRelay: Scheduled component claiming pending rows, publishing with the stored correlation ID in the message header (falling back to event ID when absent), marking sent; retries with attempt ceiling; runs without request context, so correlation ID comes from the stored column rather than MDC
   - CompletionEvent: Record carrying eventId, certificateId, status (lowercase "completed"/"failed"), retryCount, error from orchestrator
-  - CompletionListener: RabbitMQ consumer for certificate.lifecycle.completions queue; validates and applies completion status updates to certificates; uses ProcessedCompletion inbox for idempotency (PK collision = duplicate); rejects unknown certificate IDs to avoid retry loops
+  - CompletionListener: RabbitMQ consumer for certificate.lifecycle.completions queue; restores the correlation ID from the inbound x-correlation-id header (or falls back to the certificate's own correlation ID) into MDC for the duration of handling; validates and applies completion status updates to certificates; uses ProcessedCompletion inbox for idempotency (PK collision = duplicate); clears MDC in a finally block; rejects unknown certificate IDs to avoid retry loops
 - **exception/**: Custom exception types and global handler
   - CertificateNotFoundException: Thrown when a certificate lookup fails
   - CertificateStateException: Thrown when an operation is invalid for the certificate's current state (e.g., revoking an already-revoked cert)
@@ -120,6 +123,7 @@ src/
 - V4__restore_revocation_consistency.sql: Backfills revokedAt (to now()) on any revoked row lacking a timestamp, clears revokedAt from non-revoked rows, then adds check `(status = 'REVOKED') = (revoked_at IS NOT NULL)` to enforce the consistency constraint at the database level.
 - V5__create_outbox_table.sql: creates the `outbox` table with identity, event_id (unique), aggregate_id, event_type, routing_key, payload (TEXT—serialized JSON), state, attempt_count, last_error, created_at, sent_at. Includes a partial index over pending rows for efficient claiming and an index on aggregate_id for history queries.
 - V6__create_processed_completions_table.sql: creates the `processed_completions` table with event_id (primary key, varchar 255 to store retry suffixes), certificate_id (UUID), and processed_at (auto-generated timestamp). Enables idempotency for completion event consumption via primary-key collision detection.
+- V7__add_correlation_id_to_outbox.sql: adds correlation_id column (varchar 36, nullable) to the `outbox` table. Existing rows leave it null; the relay uses only it for new rows.
 
 **Configuration file** (src/main/resources/application.yml):
 - The datasource targets the shared `dcos` database through POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER, and POSTGRES_PASSWORD. The defaults match dcos-infra's .env.example
@@ -130,6 +134,12 @@ src/
 - Logging level for the service package (INFO)
 - Actuator endpoints exposed (health, info)
 - Swagger UI path (/swagger-ui.html)
+
+**Logging** (src/main/resources/logback-spring.xml):
+- Two profiles: a plain-text profile for development (default) and a JSON profile for deployment (prod)
+- The plain-text pattern includes the correlation ID in brackets for local readability
+- The JSON profile uses the logstash logback encoder with MDC fields included, producing parseable JSON for log aggregation services
+- The correlation ID and other context fields (certificateId, eventId, principal) are populated in MDC and appear in all log lines without call-site intervention
 
 **Tests** (src/test/java and src/test/resources):
 - Test strategy: real PostgreSQL on an external instance (dcos-infra locally, a service container in CI) with the dedicated `cert_api_test` database, created by scripts/setup-test-db.sh (.bat on Windows). The in-memory H2 database is removed and permanently excluded because the migrations use column types and index forms it does not support. Testcontainers is not used.
@@ -161,6 +171,7 @@ Future stories may include:
 - **Security**: Spring Security with basic authentication
 - **Validation**: Jakarta Validation (Bean Validation 3.0)
 - **OpenAPI**: springdoc-openapi 2.5.0 with Swagger UI
+- **Logging**: logstash-logback-encoder 7.4 for structured JSON output
 - **Code formatting**: Spotless 2.43.0 with Google Java Format 1.22.0 (AOSP style)
 - **Coverage and analysis**: JaCoCo 0.8.15; SonarQube Cloud via sonar-maven-plugin 5.7.0.6970
 - **Testing**: JUnit 5, Mockito, Spring Security Test, Spring AMQP Test, real PostgreSQL 16 (no H2)
@@ -170,7 +181,7 @@ Future stories may include:
 
 Work proceeds as a sequence of numbered stories. Each story branches from main, delivers its own tests, and is merged before the next story begins. Each story updates this document to reflect the new state of the repository.
 
-Stories 1–10 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, certificate creation, certificate search and pagination, certificate lifecycle transitions, lifecycle event publication, and orchestrator completion consumption with ≥80% test coverage on new code.
+Stories 1–11 are complete: verified baseline and build toolchain, continuous integration, coverage and quality gate, container image, persistent schema and certificate model, certificate creation, certificate search and pagination, certificate lifecycle transitions, lifecycle event publication, orchestrator completion consumption, and structured logging with correlation ID tracing across service boundaries—all with ≥80% test coverage on new code.
 
 ## Intended Use of This Document
 

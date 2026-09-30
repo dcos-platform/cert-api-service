@@ -2,10 +2,12 @@ package com.dcos.platform.certapi.event;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.Outbox;
+import com.dcos.platform.certapi.logging.LoggingContext;
 import com.dcos.platform.certapi.repository.OutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.UUID;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -52,6 +54,11 @@ public class OutboxEnqueueService {
             throw new IllegalStateException("Failed to serialize event envelope", e);
         }
 
+        String correlationId = MDC.get(LoggingContext.CORRELATION_ID);
+        if (correlationId == null && cert.getCorrelationId() != null) {
+            correlationId = cert.getCorrelationId().toString();
+        }
+
         Outbox outbox = new Outbox();
         outbox.setEventId(eventId.toString());
         outbox.setAggregateId(cert.getId());
@@ -61,6 +68,7 @@ public class OutboxEnqueueService {
         outbox.setState(OutboxState.PENDING);
         outbox.setAttemptCount(0);
         outbox.setCreatedAt(occurredAt);
+        outbox.setCorrelationId(correlationId);
 
         outboxRepository.save(outbox);
     }
