@@ -57,7 +57,7 @@ jobs:
           distribution: temurin
           cache: maven
       - name: Cache SonarQube scanner
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.sonar/cache
           key: sonarqube-cache-${{ runner.os }}
