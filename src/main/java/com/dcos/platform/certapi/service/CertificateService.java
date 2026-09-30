@@ -14,6 +14,7 @@ import com.dcos.platform.certapi.event.EventType;
 import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
+import com.dcos.platform.certapi.exception.InvalidRenewalException;
 import com.dcos.platform.certapi.logging.LoggingContext;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.repository.CertificateSpecifications;
@@ -214,7 +215,7 @@ public class CertificateService {
         }
 
         if (!request.getExpiresAt().isAfter(cert.getExpiresAt())) {
-            throw new IllegalArgumentException(
+            throw new InvalidRenewalException(
                     "New expiry must be strictly later than current expiry");
         }
 

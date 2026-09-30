@@ -18,6 +18,7 @@ import com.dcos.platform.certapi.event.EventType;
 import com.dcos.platform.certapi.event.OutboxEnqueueService;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.exception.CertificateStateException;
+import com.dcos.platform.certapi.exception.InvalidRenewalException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.repository.OutboxRepository;
 import java.time.Instant;
@@ -232,7 +233,7 @@ class CertificateServiceTest {
 
         renewalRequest.setExpiresAt(savedCert.getExpiresAt());
         assertThatThrownBy(() -> service.renew(savedCert.getId(), renewalRequest))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(InvalidRenewalException.class)
                 .hasMessageContaining("strictly later");
     }
 

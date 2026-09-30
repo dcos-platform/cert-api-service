@@ -19,5 +19,20 @@ spring:
   rabbitmq:
     listener:
       simple:
-        # Disable listener auto-startup in tests to prevent consuming from the live broker.
+        # Applies to Boot's auto-configured container factory only. Kept so that any listener
+        # added later without a custom factory is also held back.
         auto-startup: false
+
+# Holds the completion listener back in every test context. This is the setting that actually
+# governs it: the listener uses a custom container factory, which Boot's
+# spring.rabbitmq.listener.simple.auto-startup does not reach.
+#
+# It matters because a test class that declares @MockBean gets its own Spring context, and every
+# cached context would otherwise attach its own consumer to the shared completions queue --
+# including contexts whose CertificateRepository is a Mockito mock. RabbitMQ round-robins between
+# consumers, so a completion could be delivered to a mocked listener, which reports the
+# certificate as absent and discards it while the publishing test waits for a change that never
+# comes. The two test classes that genuinely exercise the listener start the container themselves.
+cert-api:
+  rabbitmq:
+    completion-listener-auto-startup: false

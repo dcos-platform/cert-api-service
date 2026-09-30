@@ -1,6 +1,7 @@
 package com.dcos.platform.certapi.dto;
 
 import com.dcos.platform.certapi.validation.ValidCertificateType;
+import com.dcos.platform.certapi.validation.ValidSubjectFormat;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.Max;
@@ -28,6 +29,7 @@ import java.util.UUID;
 public record CertificateCreateRequest(
         @NotBlank(message = "Subject must not be blank")
                 @Size(max = 255, message = "Subject must not exceed 255 characters")
+                @ValidSubjectFormat
                 @Schema(
                         description = "Distinguished name or subject of the certificate",
                         example = "CN=service-alpha,OU=platform,O=DCOS")

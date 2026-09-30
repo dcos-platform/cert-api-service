@@ -10,15 +10,19 @@ import com.dcos.platform.certapi.domain.ProcessedCompletion;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.repository.ProcessedCompletionRepository;
 import com.dcos.platform.certapi.support.CertificateFixtures;
+import com.dcos.platform.certapi.support.ListenerTestSupport;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -30,22 +34,92 @@ import org.springframework.test.context.ActiveProfiles;
 class CompletionListenerIntegrationTest {
 
     @Autowired private RabbitTemplate rabbitTemplate;
+    @Autowired private RabbitAdmin rabbitAdmin;
+    @Autowired private RabbitListenerEndpointRegistry listenerRegistry;
     @Autowired private CertificateRepository certificateRepository;
     @Autowired private ProcessedCompletionRepository processedCompletionRepository;
 
+    /**
+     * Generous ceiling for a message to be consumed and its effect to land in the database.
+     *
+     * <p>Awaitility returns as soon as the condition holds, so a healthy run is unaffected by the
+     * size of this value; it only bounds how long a genuine failure takes to report. It is
+     * deliberately well beyond any plausible delivery latency so that a failure here means the
+     * message was lost rather than merely slow.
+     */
+    private static final Duration MESSAGE_TIMEOUT = Duration.ofSeconds(30);
+
+    /** Slower than the default poll, because these conditions also query the broker. */
+    private static final Duration DIAGNOSTIC_POLL_INTERVAL = Duration.ofMillis(500);
+
     private static final String COMPLETIONS_QUEUE = "certificate.lifecycle.completions";
+    private static final String DLQ = "cert.events.dlq";
     private static final String NONNATIVE_SUBJECT = "CN=Über Company,O=DCOS";
 
+    /**
+     * Resets shared state only while no consumer is attached, then reattaches.
+     *
+     * <p>The listener runs against the same queue and the same database for every test in this
+     * class. Purging or deleting underneath a live consumer races whatever it is delivering, which
+     * is what made these tests fail intermittently in different places from run to run.
+     */
     @BeforeEach
-    void cleanupBefore() {
+    void setupTest() {
+        ListenerTestSupport.stopListenersAndAwaitNoConsumer(
+                listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
+        purgeAndReset();
+        ListenerTestSupport.startListenersAndAwaitConsumer(
+                listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
+    }
+
+    @AfterEach
+    void teardownTest() {
+        ListenerTestSupport.stopListenersAndAwaitNoConsumer(
+                listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
+        purgeAndReset();
+    }
+
+    private void purgeAndReset() {
+        rabbitAdmin.purgeQueue(COMPLETIONS_QUEUE);
+        rabbitAdmin.purgeQueue(DLQ);
         processedCompletionRepository.deleteAll();
         certificateRepository.deleteAll();
     }
 
-    @AfterEach
-    void cleanupAfter() {
-        processedCompletionRepository.deleteAll();
-        certificateRepository.deleteAll();
+    /**
+     * Waits for the completion carrying {@code eventId} to be consumed, and for the certificate to
+     * satisfy the given expectations.
+     *
+     * <p>Asserted in two stages, because certificate state alone cannot distinguish a message that
+     * was never consumed from one that was consumed and had no effect — and a completion could in
+     * principle be applied by some other delivery. The inbox row establishes that this specific
+     * event was processed. When it is absent, the broker's own message and consumer counts say
+     * whether the message is still queued, was dead-lettered, or was never routed at all.
+     *
+     * @param eventId the completion event id that must appear in the inbox
+     * @param certificateId the certificate the completion applies to
+     * @param expectations assertions to apply to the certificate once it is found
+     */
+    private void awaitCompletionApplied(
+            String eventId, UUID certificateId, Consumer<Certificate> expectations) {
+        await().atMost(MESSAGE_TIMEOUT)
+                .pollInterval(DIAGNOSTIC_POLL_INTERVAL)
+                .untilAsserted(
+                        () -> {
+                            assertThat(processedCompletionRepository.findById(eventId))
+                                    .as(
+                                            "inbox row for eventId=%s; broker: %s",
+                                            eventId,
+                                            ListenerTestSupport.brokerState(
+                                                    rabbitAdmin, COMPLETIONS_QUEUE, DLQ))
+                                    .isPresent();
+
+                            assertThat(certificateRepository.findById(certificateId))
+                                    .as("certificate %s after completion", certificateId)
+                                    .isPresent()
+                                    .get()
+                                    .satisfies(expectations);
+                        });
     }
 
     @Test
@@ -61,21 +135,13 @@ class CompletionListenerIntegrationTest {
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
-        await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(
-                        () -> {
-                            Optional<Certificate> updated =
-                                    certificateRepository.findById(cert.getId());
-                            assertThat(updated)
-                                    .isPresent()
-                                    .get()
-                                    .satisfies(
-                                            c -> {
-                                                assertThat(c.getOrchestrationStatus())
-                                                        .isEqualTo(OrchestrationStatus.COMPLETED);
-                                                assertThat(c.getLastError()).isNull();
-                                            });
-                        });
+        awaitCompletionApplied(
+                eventId,
+                cert.getId(),
+                c -> {
+                    assertThat(c.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.COMPLETED);
+                    assertThat(c.getLastError()).isNull();
+                });
     }
 
     @Test
@@ -92,21 +158,13 @@ class CompletionListenerIntegrationTest {
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
-        await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(
-                        () -> {
-                            Optional<Certificate> updated =
-                                    certificateRepository.findById(cert.getId());
-                            assertThat(updated)
-                                    .isPresent()
-                                    .get()
-                                    .satisfies(
-                                            c -> {
-                                                assertThat(c.getOrchestrationStatus())
-                                                        .isEqualTo(OrchestrationStatus.FAILED);
-                                                assertThat(c.getLastError()).isEqualTo(errorMsg);
-                                            });
-                        });
+        awaitCompletionApplied(
+                eventId,
+                cert.getId(),
+                c -> {
+                    assertThat(c.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.FAILED);
+                    assertThat(c.getLastError()).isEqualTo(errorMsg);
+                });
     }
 
     @Test
@@ -124,7 +182,7 @@ class CompletionListenerIntegrationTest {
         // Send first event
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, firstEvent);
 
-        await().atMost(Duration.ofSeconds(5))
+        await().atMost(MESSAGE_TIMEOUT)
                 .untilAsserted(
                         () -> {
                             Optional<ProcessedCompletion> processed =
@@ -162,6 +220,38 @@ class CompletionListenerIntegrationTest {
     }
 
     @Test
+    @DisplayName("integration: completion for an unknown certificate is dead-lettered, not dropped")
+    void unknownCertificateIsDeadLettered() {
+        String eventId = UUID.randomUUID().toString();
+        CompletionEvent event =
+                new CompletionEvent(eventId, UUID.randomUUID().toString(), "COMPLETED", 0, null);
+
+        rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
+
+        await().atMost(MESSAGE_TIMEOUT)
+                .pollInterval(DIAGNOSTIC_POLL_INTERVAL)
+                .untilAsserted(
+                        () ->
+                                assertThat(dlqDepth())
+                                        .as(
+                                                "dead-lettered after bounded retries; broker: %s",
+                                                ListenerTestSupport.brokerState(
+                                                        rabbitAdmin, COMPLETIONS_QUEUE, DLQ))
+                                        .isPositive());
+
+        // The event id must not have been claimed, or a redelivery once the certificate exists
+        // would be suppressed as a duplicate and the completion lost for good.
+        assertThat(processedCompletionRepository.findById(eventId))
+                .as("inbox row for an unresolved completion")
+                .isEmpty();
+    }
+
+    private int dlqDepth() {
+        var info = rabbitAdmin.getQueueInfo(DLQ);
+        return info == null ? 0 : info.getMessageCount();
+    }
+
+    @Test
     @DisplayName("integration: retry-suffixed event id stored in inbox")
     void retryEventIdStoredInInbox() {
         Certificate cert = CertificateFixtures.active();
@@ -176,7 +266,7 @@ class CompletionListenerIntegrationTest {
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
-        await().atMost(Duration.ofSeconds(5))
+        await().atMost(MESSAGE_TIMEOUT)
                 .untilAsserted(
                         () -> {
                             Optional<ProcessedCompletion> processed =
@@ -207,22 +297,13 @@ class CompletionListenerIntegrationTest {
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
-        await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(
-                        () -> {
-                            Optional<Certificate> updated =
-                                    certificateRepository.findById(cert.getId());
-                            assertThat(updated)
-                                    .isPresent()
-                                    .get()
-                                    .satisfies(
-                                            c -> {
-                                                assertThat(c.getSubject())
-                                                        .isEqualTo(NONNATIVE_SUBJECT);
-                                                assertThat(c.getOrchestrationStatus())
-                                                        .isEqualTo(OrchestrationStatus.COMPLETED);
-                                            });
-                        });
+        awaitCompletionApplied(
+                eventId,
+                cert.getId(),
+                c -> {
+                    assertThat(c.getSubject()).isEqualTo(NONNATIVE_SUBJECT);
+                    assertThat(c.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.COMPLETED);
+                });
     }
 
     @Test
@@ -239,23 +320,14 @@ class CompletionListenerIntegrationTest {
                 new CompletionEvent(firstEventId, cert.getId().toString(), "COMPLETED", 0, null);
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, firstEvent);
 
-        await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(
-                        () -> {
-                            Optional<Certificate> updated =
-                                    certificateRepository.findById(cert.getId());
-                            assertThat(updated)
-                                    .isPresent()
-                                    .get()
-                                    .satisfies(
-                                            c -> {
-                                                assertThat(c.getStatus())
-                                                        .isEqualTo(CertificateStatus.ACTIVE);
-                                                assertThat(c.getOrchestrationStatus())
-                                                        .isEqualTo(OrchestrationStatus.COMPLETED);
-                                                assertThat(c.getLastError()).isNull();
-                                            });
-                        });
+        awaitCompletionApplied(
+                firstEventId,
+                cert.getId(),
+                c -> {
+                    assertThat(c.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+                    assertThat(c.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.COMPLETED);
+                    assertThat(c.getLastError()).isNull();
+                });
 
         // Second: send genuinely distinct failed event. This proves certificate status (ACTIVE)
         // is unchanged even after a failed completion.
@@ -270,32 +342,15 @@ class CompletionListenerIntegrationTest {
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, secondEvent);
 
-        await().atMost(Duration.ofSeconds(5))
-                .untilAsserted(
-                        () -> {
-                            Optional<Certificate> updated =
-                                    certificateRepository.findById(cert.getId());
-                            assertThat(updated)
-                                    .isPresent()
-                                    .get()
-                                    .satisfies(
-                                            c -> {
-                                                assertThat(c.getStatus())
-                                                        .isEqualTo(
-                                                                CertificateStatus
-                                                                        .ACTIVE); // Certificate
-                                                // status NEVER
-                                                // changes
-                                                assertThat(c.getOrchestrationStatus())
-                                                        .isEqualTo(
-                                                                OrchestrationStatus
-                                                                        .FAILED); // Orchestration
-                                                // status changed
-                                                assertThat(c.getLastError())
-                                                        .isEqualTo(
-                                                                "orchestration failed for other reason");
-                                            });
-                        });
+        awaitCompletionApplied(
+                secondEventId,
+                cert.getId(),
+                c -> {
+                    // The certificate's own status never changes; only orchestration state does.
+                    assertThat(c.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+                    assertThat(c.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.FAILED);
+                    assertThat(c.getLastError()).isEqualTo("orchestration failed for other reason");
+                });
 
         // Third: send duplicate of the first (completed) event. It should be ignored.
         CompletionEvent duplicateFirstEvent =

@@ -225,6 +225,116 @@ curl -u admin:changeme http://localhost:8081/api/v1/certificates/<id>
 
 Queue depths and consumer counts are visible in the RabbitMQ management UI.
 
+## Running Migrations
+
+Flyway automatically applies database migrations at service startup. No manual intervention is required under normal circumstances.
+
+### Automatic Migration on Startup
+
+When the service starts:
+1. Flyway checks the `flyway_schema_history` table in the `dcos_certificates` schema
+2. Identifies any migrations not yet applied
+3. Applies them in order (V1, V2, V3, ...)
+4. Records the applied versions in the history table
+5. If all applied, startup proceeds; if any migration fails, the service fails to boot
+
+### Migration Files
+
+Migration scripts are located in `src/main/resources/db/migration/` and follow Flyway naming conventions:
+- **V1__create_schema_and_certificates.sql** — Creates the certificates table with indexes and constraints
+- **V2__seed_demo_certificates.sql** — Inserts five demo certificates for testing
+- **V3__restore_deferred_constraints.sql** — Deferred constraint setup
+- **V4__restore_revocation_consistency.sql** — Revocation constraints
+- **V5__create_outbox_table.sql** — Outbox for event publishing
+- **V6__create_processed_completions_table.sql** — Inbox for completion idempotency
+- **V7__add_correlation_id_to_outbox.sql** — Adds correlation_id column to outbox
+
+### Migration Safety
+
+**Critical:** If you edit a migration file **after it has already been applied** to the database, the service will not boot. Flyway compares the applied migration's checksum against the file's checksum; a mismatch causes a startup failure with a message naming the mismatched migration.
+
+**Solution:** Never edit an already-applied migration. To make a schema change, create a new migration file. If the database is a temporary development instance, you can rebuild the schema from scratch:
+
+```bash
+# Only on development databases!
+DROP SCHEMA IF EXISTS dcos_certificates CASCADE;
+DROP TABLE IF EXISTS flyway_schema_history;
+# Then restart the service to re-apply all migrations
+```
+
+### Testing Migrations
+
+The integration test suite validates migrations against a real PostgreSQL instance (the test database). Tests verify:
+- All migrations apply without error
+- Indexes and constraints are created as specified
+- Seeded data loads correctly
+- Schema changes are backward-compatible with existing records
+
+See [Repository Tests](src/test/java/com/dcos/platform/certapi/repository/) for examples.
+
+## Connecting to the Broker
+
+The service communicates with RabbitMQ for two purposes: **publishing** lifecycle events and **consuming** completion notifications.
+
+### Configuration
+
+Connection details are controlled by environment variables (with defaults suitable for local development):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RABBITMQ_HOST` | `localhost` | Broker hostname |
+| `RABBITMQ_PORT` | `5672` | Broker AMQP port |
+| `RABBITMQ_USER` | `dcos` | Broker username |
+| `RABBITMQ_PASSWORD` | `changeme` | Broker password |
+| `RABBITMQ_VHOST` | `/` | Broker virtual host |
+
+Set these via environment or in `application.yml`:
+
+```bash
+RABBITMQ_HOST=broker.dcos.local \
+RABBITMQ_PORT=5672 \
+RABBITMQ_USER=dcos \
+RABBITMQ_PASSWORD=production-secret \
+mvn spring-boot:run
+```
+
+Or in `application.yml`:
+```yaml
+spring:
+  rabbitmq:
+    host: broker.dcos.local
+    port: 5672
+    username: dcos
+    password: production-secret
+```
+
+### Topology
+
+The service expects the broker to have:
+
+**Exchanges**
+- `cert.events` (topic exchange) — Receives lifecycle events (created, renewed, revoked, expired)
+- `cert.events.dlx` (direct exchange) — Dead-letter exchange for failed messages
+
+**Queues**
+- `certificate.lifecycle.events` — Consumed by the orchestrator (durable, bound to cert.events with routing key `cert.#`)
+- `cert.lifecycle.events` — Consumed by cert-admin service (durable)
+- `certificate.lifecycle.completions` — Received by CompletionListener from the orchestrator (durable)
+- `cert.events.dlq` (optional) — Dead-letter queue for inspection of failed message retries
+
+The topology is not created by the service; it must exist on the broker before the service starts. Use RabbitMQ's management API or UI to create it, or ensure your broker container image includes it.
+
+### Health Checks
+
+The `ActuatorHealthIndicator` queries the broker during startup but does not fail the service if the broker is unavailable (broker is a soft dependency for publishing). The service starts and waits for the broker to become available; publish failures are retried with exponential backoff.
+
+To monitor broker connectivity:
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+The `rabbitmq` component shows up only if the broker is reachable at the time of the check.
+
 ### Migration Safety
 
 Flyway manages all schema changes. If you edit a migration file *after it has been applied to the shared database*, the service will not boot: Flyway reports a checksum mismatch on that migration version. The message points at the migration file, but the cause is the state of the database, which recorded the original checksum. Restore the file to its applied content, or rebuild the schema. Never edit an applied migration; add a new one instead.
@@ -339,13 +449,119 @@ Every HTTP request receives a **correlation identifier** (UUID) at the earliest 
 
 All log lines in this flow can be filtered by `correlationId=client-request-123` to trace the entire request.
 
+## Architecture
+
+cert-api is one of four DCOS services (cert-api, cert-orchestrator, cert-admin, cert-health) that share RabbitMQ and PostgreSQL infrastructure from `dcos-infra`. cert-api publishes lifecycle events to the `cert.events` topic exchange through a transactional outbox, and consumes completion events from the orchestrator. Queue and exchange names are configured under `cert-api.rabbitmq` in `application.yml`.
+
+```mermaid
+flowchart LR
+    Client["API client"] -->|REST| Api
+
+    subgraph DCOS["DCOS services"]
+        Api["cert-api<br/>(this service)"]
+        Orch["cert-orchestrator"]
+        Admin["cert-admin"]
+        Health["cert-health"]
+    end
+
+    subgraph Infra["dcos-infra"]
+        PG[("PostgreSQL<br/>dcos / schema dcos_certificates")]
+        subgraph MQ["RabbitMQ"]
+            Ex{{"cert.events<br/>topic exchange"}}
+            QOrch["certificate.lifecycle.events"]
+            QAdmin["cert.lifecycle.events"]
+            QComp["certificate.lifecycle.completions"]
+            DLX{{"cert.events.dlx"}}
+        end
+    end
+
+    Api -->|"certificates, outbox,<br/>processed_completions"| PG
+    Api -->|"outbox relay publishes<br/>cert.created / renewed / revoked / expired"| Ex
+    Ex -->|"cert.#"| QOrch
+    Ex -->|"cert.#"| QAdmin
+    Ex -.->|dead letters| DLX
+    QOrch --> Orch
+    QAdmin --> Admin
+    Orch -->|publishes completion| QComp
+    QComp -->|CompletionListener| Api
+    Health -.->|probes| Api
+```
+
+The event flow for a certificate change is:
+
+1. A REST call writes the certificate and an outbox row in one transaction.
+2. The scheduled outbox relay publishes the event to `cert.events`, which routes it by the `cert.#` binding to the orchestrator and admin queues.
+3. The orchestrator publishes a completion (`COMPLETED` or `FAILED`) to `certificate.lifecycle.completions`.
+4. `CompletionListener` records the event in `processed_completions` (idempotency) and updates only `orchestration_status` and `last_error`.
+
 ## Schema and Data Model
 
 The service stores three tables in the shared `dcos` PostgreSQL database, under the `dcos_certificates` schema:
 
 - **certificates** — Certificate metadata with status (ACTIVE/EXPIRED/REVOKED) and orchestration progress (PENDING/PROCESSING/COMPLETED/FAILED).
-- **outbox_messages** — Transactional outbox for reliable event publishing. Events are written with the certificate in one transaction, then a scheduled relay polls and publishes them.
+- **outbox** — Transactional outbox for reliable event publishing. Events are written with the certificate in one transaction, then a scheduled relay polls and publishes them.
 - **processed_completions** — Inbox idempotency table. Records completion event IDs (including retry-suffixed forms from the orchestrator) to prevent duplicate processing.
+
+
+```mermaid
+erDiagram
+    certificates {
+        uuid id PK
+        varchar serial_number UK
+        varchar subject
+        varchar common_name
+        varchar type "TLS, CLIENT, CA, CODE_SIGNING"
+        varchar status "ACTIVE, EXPIRED, REVOKED"
+        varchar orchestration_status "PENDING, PROCESSING, COMPLETED, FAILED"
+        varchar issued_by
+        timestamptz issued_at
+        timestamptz expires_at
+        integer renewal_window_days
+        integer renewal_count
+        timestamptz revoked_at
+        varchar revocation_reason
+        varchar revocation_comment
+        varchar requested_by
+        uuid correlation_id
+        text last_error
+        timestamptz created_at
+        timestamptz updated_at
+        bigint version
+    }
+
+    outbox {
+        bigserial id PK
+        varchar event_id UK
+        uuid aggregate_id "certificate id, no FK"
+        varchar event_type
+        varchar routing_key
+        text payload
+        varchar state "PENDING, SENT, FAILED"
+        integer attempt_count
+        text last_error
+        varchar correlation_id
+        timestamp created_at
+        timestamp sent_at
+    }
+
+    processed_completions {
+        varchar event_id PK
+        uuid certificate_id "no FK"
+        timestamptz processed_at
+    }
+
+    flyway_schema_history {
+        integer installed_rank PK
+        varchar version
+        varchar description
+        boolean success
+    }
+
+    certificates ||--o{ outbox : "aggregate_id"
+    certificates ||--o{ processed_completions : "certificate_id"
+```
+
+The relationships are logical only: the migrations define no foreign keys, so the outbox and inbox rows are not removed when a certificate is. `flyway_schema_history` is maintained by Flyway and is unrelated to the domain tables. The partial unique index `idx_certificates_subject_type_active` on `(subject, type) WHERE status = 'ACTIVE'` permits one active certificate per subject and type.
 
 ### Deliberate Schema Design Choice
 
