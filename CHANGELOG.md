@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 13: Consolidation and polish
+
+#### Fixed
+
+- **Subject validation threw `StackOverflowError` on a long subject** (SonarCloud S5998). `SubjectFormatValidator` matched the whole distinguished name with `^([A-Z]+=(?:[^,=]|\\.)+)(,\s*[A-Z]+=(?:[^,=]|\\.)+)*$`. `java.util.regex` recurses once per iteration when a quantifier is applied to a group rather than to a plain character class, so a subject of 50,000 characters overflowed the stack — verified directly, not inferred. The `@Size(max = 255)` on the field does not prevent this, because Bean Validation evaluates every constraint on a value rather than stopping at the first failure, so an oversized subject still reaches the validator. The alternation was also ambiguous, since `[^,=]` already matches a backslash and so an escape sequence had two parses, though a backtracking blowup could not be reproduced.
+
+  Replaced with an iterative scan that is linear in the length of the input: split on unescaped commas, then check each relative distinguished name has an uppercase type, a non-empty value, and no further unescaped equals sign. The only pattern retained applies to an attribute type and is a plain character class, which the matcher implements without recursion. Behaviour is unchanged for well-formed and malformed subjects alike; tests were added for the overflow case, escaped equals signs, empty values, trailing separators and lowercase types.
+
+- **Every Spring test context attached its own consumer to the shared completions queue, including contexts whose repositories were mocks.** This was the cause of the intermittent CI failures in `CompletionListenerIntegrationTest`, which moved between tests and between runs and were unaffected by raising the timeout from five seconds to thirty.
+
+  `completionListenerContainerFactory` never called `setAutoStartup`, so it defaulted to true. The `spring.rabbitmq.listener.simple.auto-startup: false` in the test configuration looked like it covered this, but that property configures only Boot's own auto-configured container factory and never reaches a custom one. Any test class declaring `@MockBean` gets its own Spring context, each context is cached for the rest of the JVM run, and each one therefore held a live consumer on `certificate.lifecycle.completions` — `CompletionListenerTransientFailureTest` among them, where `CertificateRepository` is a Mockito mock. RabbitMQ round-robins deliveries between consumers, so a completion published by one test could be delivered to a listener whose repository returns `Optional.empty()` for every id. It reported the certificate absent, discarded the message, and the publishing test waited for a change that could never arrive. The CI log shows both consumers within a tenth of a second: one updating certificate `04b543f8`, the next reporting that same certificate not found.
+
+  The container factory now honours `cert-api.rabbitmq.completion-listener-auto-startup`, which defaults to true and is set false for tests, so a consumer exists only where a test deliberately starts one. `CompletionListenerAutoStartupTest` guards the production direction of that wiring, since nothing else in the suite would notice if the property stopped taking effect — the service would start cleanly and silently consume nothing.
+
+- **Listener tests reset shared state underneath a live consumer.** `@BeforeEach` and `@AfterEach` purged the queue and deleted every certificate while the container was still attached, racing whatever was being delivered. Both listener test classes now stop the container and wait for the broker to confirm the consumer is gone before touching the queue or the database, and only then reattach. `ListenerTestSupport` gained `stopListenersAndAwaitNoConsumer` for this; neither `stop()` nor `isRunning()` is trusted, because the former is bounded by the shutdown timeout rather than synchronous and the latter reports the lifecycle flag rather than consumer state.
+
+- **Completion events for an unresolved certificate were lost permanently and silently.** (Found by inspection while diagnosing the above; it was not the cause of the CI failures.) `CompletionListener` claimed the event id in the inbox *before* looking the certificate up, and treated a missing certificate as a no-op: it logged a warning and acknowledged. The combination is worse than either half. The acknowledgement discards the message, and the inbox row that was already committed causes any redelivery of the same event to be suppressed as a duplicate — so the completion can never be applied, and nothing is left in a dead-letter queue to show that it happened. The order is now reversed: the certificate is resolved first, and an unknown certificate raises `CertificateNotFoundException`, leaving no inbox row so a redelivery can still succeed. Retries are bounded by the container's retry policy, after which the message is dead-lettered and observable. A malformed certificate id is still logged and acknowledged, because no redelivery can fix it.
+
+  This supersedes two design decisions recorded under Story 10, *inbox-first ordering* and *unknown certificate IDs are acknowledged*. The stated motivation for both — avoiding an infinite retry loop — does not require acknowledgement: `defaultRequeueRejected(false)` plus the retry policy already bound the number of attempts, so rejecting cannot loop.
+
+  Known trade-off of the new ordering: a redelivery of an event that was already applied will now be dead-lettered rather than recognised as a duplicate, if its certificate has since ceased to exist. Reaching that state requires a certificate to be deleted, and this service exposes no delete — revocation is a status change — so it is currently unreachable in production. Making the duplicate check take precedence over the not-found check would close it.
+
+- **Listener integration tests could not say where a lost message went.** A timeout reported only that the certificate had not reached the expected status, which is the same symptom for a message that was never routed, never consumed, or dead-lettered. `CompletionListenerIntegrationTest` now asserts in two stages — inbox row, then certificate — and includes the broker's message and consumer counts for both the completions queue and the dead-letter queue in the failure description.
+
+#### Removed
+
+- **Test output capture artifact**: `test_output.txt` (419 KB) was a captured test execution output added during Story 9 for temporary verification. The manual verification is complete and the file is no longer needed.
+- **Temporary drop-index SQL scripts**: Both `drop-index.sql` (root) and `scripts/drop-index-for-testing.sql` were added in Story 6 to support manual testing of the partial unique index constraint. These scripts silently dropped the `idx_certificates_subject_type_active` index, creating the exact defect that was found and corrected during Story 6. Since no schema-altering tests are authored (per project constraints), these files serve no purpose and present a maintenance hazard: running either script removes the constraint preventing duplicate active certificates with no test or deployment safeguard. The manual testing they supported is complete; the index is restored and protected.
+
+#### Changed
+
+- **Unused import removal**: Spotless configuration now includes removeUnusedImports, closing a gap where unused imports were neither removed nor flagged despite the project's clean-code mandate.
+
+#### Added
+
+- **Gitignore improvements**: Added patterns for JVM crash dumps (`hs_err_pid*.log` variants) and captured output files (`*_output.txt`), adopting a naming convention for test captures that the ignore file matches.
+
 ### Story 12: End-to-end verification against the orchestrator
 
 #### Fixed

@@ -170,7 +170,8 @@ class CertificateCreationIntegrationTest {
 
         // Attempt to create a second with the same subject and type (fails)
         assertThatThrownBy(() -> service.create(request, PRINCIPAL))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasStackTraceContaining("idx_certificates_subject_type_active");
     }
 
     @Test
@@ -247,7 +248,7 @@ class CertificateCreationIntegrationTest {
     @WithMockUser(roles = "ADMIN")
     void renewalOfExpiredCertificateConflictsWhenActiveDuplicateExists() {
         String subject1 = uniqueSubject();
-        String subject2 = uniqueSubject(); // Use different subjects to avoid constraint violation
+        String subject2 = uniqueSubject(); // distinct at creation; aligned with subject1 below
 
         CertificateCreateRequest request1 =
                 new CertificateCreateRequest(
@@ -289,6 +290,7 @@ class CertificateCreationIntegrationTest {
         renewalRequest.setRenewalWindowDays(30);
 
         assertThatThrownBy(() -> service.renew(expired.id(), renewalRequest))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasStackTraceContaining("idx_certificates_subject_type_active");
     }
 }

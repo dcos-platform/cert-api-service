@@ -1,6 +1,7 @@
 package com.dcos.platform.certapi.event;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
+import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import java.util.Optional;
 import java.util.UUID;
@@ -91,13 +93,19 @@ class CompletionListenerTest {
         UUID certId = UUID.randomUUID();
         String eventId = UUID.randomUUID().toString();
 
+        Certificate cert = new Certificate();
+        cert.setId(certId);
+        cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
+
+        when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
         when(inboxService.recordProcessed(eventId, certId)).thenReturn(false);
 
         CompletionEvent event =
                 new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
         listener.consume(event, null);
 
-        verify(certificateRepository, never()).findById(any());
+        // The certificate is resolved before the event id is claimed, so a duplicate costs one
+        // read. What matters is that it leaves the certificate untouched.
         verify(certificateRepository, never()).save(any());
     }
 
@@ -116,19 +124,22 @@ class CompletionListenerTest {
     }
 
     @Test
-    @DisplayName("consume: certificate not found")
+    @DisplayName("consume: certificate not found throws and claims no event id")
     void consumeCertificateNotFound() {
         UUID certId = UUID.randomUUID();
         String eventId = UUID.randomUUID().toString();
 
-        when(inboxService.recordProcessed(eventId, certId)).thenReturn(true);
         when(certificateRepository.findById(certId)).thenReturn(Optional.empty());
 
         CompletionEvent event =
                 new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
-        listener.consume(event, null);
+
+        assertThatThrownBy(() -> listener.consume(event, null))
+                .isInstanceOf(CertificateNotFoundException.class);
 
         verify(certificateRepository, never()).save(any());
+        // No inbox row, so a redelivery once the certificate is visible can still be processed.
+        verify(inboxService, never()).recordProcessed(any(), any());
     }
 
     @Test

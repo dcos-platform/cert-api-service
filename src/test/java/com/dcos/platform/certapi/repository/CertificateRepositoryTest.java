@@ -19,6 +19,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
 
 /** Exercises retrieval against the migrated schema and its seed data on real PostgreSQL. */
 @RequiresTestDatabase
@@ -124,5 +127,32 @@ class CertificateRepositoryTest {
         assertThat(reloaded.getRevokedAt()).isNotNull();
         assertThat(reloaded.getRevocationReason()).isEqualTo(RevocationReason.KEY_COMPROMISE);
         assertThat(reloaded.getRevocationComment()).isEqualTo("revoked by fixture");
+    }
+
+    @Test
+    void findAll_withSpecification_returnsEmptyWhenNoMatch() {
+        Specification<Certificate> noMatch =
+                (root, query, cb) -> cb.equal(root.get("status"), CertificateStatus.REVOKED);
+
+        Page<Certificate> result = repository.findAll(noMatch, PageRequest.of(0, 10));
+
+        assertThat(result.getContent()).isEmpty();
+        assertThat(result.getTotalElements()).isZero();
+        assertThat(result.getTotalPages()).isZero();
+        assertThat(result.isFirst()).isTrue();
+        assertThat(result.isLast()).isTrue();
+    }
+
+    @Test
+    void findAll_withPaging_returnEmptyPageWhenBeyondRange() {
+        Page<Certificate> firstPage = repository.findAll(PageRequest.of(0, 10));
+        long totalPages = firstPage.getTotalPages();
+
+        Page<Certificate> beyondRange =
+                repository.findAll(PageRequest.of((int) totalPages + 1, 10));
+
+        assertThat(beyondRange.getContent()).isEmpty();
+        assertThat(beyondRange.getTotalElements()).isEqualTo(firstPage.getTotalElements());
+        assertThat(beyondRange.isLast()).isTrue();
     }
 }

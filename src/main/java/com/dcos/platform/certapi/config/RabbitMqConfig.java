@@ -62,6 +62,18 @@ public class RabbitMqConfig {
     @Value("${cert-api.rabbitmq.dlq-pattern:#}")
     private String dlqPattern;
 
+    /**
+     * Whether the completion listener attaches a consumer when the context starts. True in
+     * production; tests set it false and start the container explicitly.
+     *
+     * <p>This has to be honoured here rather than through {@code
+     * spring.rabbitmq.listener.simple.auto-startup}, which configures only Boot's own
+     * auto-configured container factory. A custom factory such as this one is never consulted by
+     * that property, so setting it has no effect on this listener.
+     */
+    @Value("${cert-api.rabbitmq.completion-listener-auto-startup:true}")
+    private boolean completionListenerAutoStartup;
+
     @Bean
     public TopicExchange certEventsExchange() {
         return new TopicExchange(exchange, true, false);
@@ -233,6 +245,7 @@ public class RabbitMqConfig {
         factory.setMessageConverter(jsonMessageConverter);
         factory.setDefaultRequeueRejected(false);
         factory.setAcknowledgeMode(AcknowledgeMode.AUTO);
+        factory.setAutoStartup(completionListenerAutoStartup);
 
         // Retry with exponential backoff: 3 max attempts, initial backoff 1s, multiplier 2
         RetryTemplate retryTemplate = new RetryTemplate();

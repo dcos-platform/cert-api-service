@@ -27,12 +27,11 @@
                     <version>version</version>
                     <levelValue>severity</levelValue>
                     <level>level</level>
-                    <threadName>thread</threadName>
-                    <loggerName>logger</loggerName>
+                    <thread>thread</thread>
+                    <logger>logger</logger>
                     <message>message</message>
                     <exception>exception</exception>
                 </fieldNames>
-                <includeMdcX>true</includeMdcX>
                 <includeContext>false</includeContext>
             </encoder>
         </appender>

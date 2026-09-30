@@ -21,7 +21,7 @@
     <properties>
         <java.version>21</java.version>
         <springdoc.version>2.5.0</springdoc.version>
-        <logstash-logback-encoder.version>7.4</logstash-logback-encoder.version>
+        <logstash-logback-encoder.version>8.0</logstash-logback-encoder.version>
         <sonar.projectKey>dcos-platform_cert-api-service</sonar.projectKey>
         <sonar.organization>dcos-platform-sonar-key</sonar.organization>
         <sonar.host.url>https://sonarcloud.io</sonar.host.url>
@@ -39,6 +39,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- Actuator -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
         <!-- JPA + PostgreSQL -->
@@ -150,6 +156,7 @@
                 <version>2.43.0</version>
                 <configuration>
                     <java>
+                        <removeUnusedImports/>
                         <googleJavaFormat>
                             <version>1.22.0</version>
                             <style>AOSP</style>

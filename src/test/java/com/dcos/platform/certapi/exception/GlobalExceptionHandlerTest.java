@@ -396,23 +396,64 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void handleIllegalArgumentSetsErrorCode() {
-        IllegalArgumentException ex =
-                new IllegalArgumentException(
-                        "New expiry must be strictly later than current expiry");
+        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
 
         ProblemDetail problem = handler.handleIllegalArgument(ex);
+
+        assertThat(problem.getProperties())
+                .containsEntry("code", ErrorCode.CERT_INVALID_PARAMETER.name());
+    }
+
+    @Test
+    void handleIllegalArgumentSetsErrorType() {
+        IllegalArgumentException ex = new IllegalArgumentException("Invalid sort field");
+
+        ProblemDetail problem = handler.handleIllegalArgument(ex);
+
+        assertThat(problem.getType())
+                .isEqualTo(URI.create("https://errors.dcos.local/cert-api/invalid-argument"));
+    }
+
+    @Test
+    void handleInvalidRenewalReturnsBadRequestStatus() {
+        InvalidRenewalException ex =
+                new InvalidRenewalException(
+                        "New expiry must be strictly later than current expiry");
+
+        ProblemDetail problem = handler.handleInvalidRenewal(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+    }
+
+    @Test
+    void handleInvalidRenewalSetsErrorCode() {
+        InvalidRenewalException ex =
+                new InvalidRenewalException(
+                        "New expiry must be strictly later than current expiry");
+
+        ProblemDetail problem = handler.handleInvalidRenewal(ex);
 
         assertThat(problem.getProperties())
                 .containsEntry("code", ErrorCode.CERT_INVALID_RENEWAL.name());
     }
 
     @Test
-    void handleIllegalArgumentSetsErrorType() {
-        IllegalArgumentException ex =
-                new IllegalArgumentException(
+    void handleInvalidRenewalIncludesExceptionMessage() {
+        String message = "New expiry must be strictly later than current expiry";
+        InvalidRenewalException ex = new InvalidRenewalException(message);
+
+        ProblemDetail problem = handler.handleInvalidRenewal(ex);
+
+        assertThat(problem.getDetail()).contains(message);
+    }
+
+    @Test
+    void handleInvalidRenewalSetsErrorType() {
+        InvalidRenewalException ex =
+                new InvalidRenewalException(
                         "New expiry must be strictly later than current expiry");
 
-        ProblemDetail problem = handler.handleIllegalArgument(ex);
+        ProblemDetail problem = handler.handleInvalidRenewal(ex);
 
         assertThat(problem.getType())
                 .isEqualTo(URI.create("https://errors.dcos.local/cert-api/invalid-renewal"));

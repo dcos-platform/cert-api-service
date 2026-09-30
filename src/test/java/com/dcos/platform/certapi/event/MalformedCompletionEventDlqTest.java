@@ -3,15 +3,18 @@ package com.dcos.platform.certapi.event;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
+import com.dcos.platform.certapi.support.ListenerTestSupport;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import java.time.Duration;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -24,12 +27,29 @@ class MalformedCompletionEventDlqTest {
 
     @Autowired private RabbitTemplate rabbitTemplate;
     @Autowired private RabbitAdmin rabbitAdmin;
+    @Autowired private RabbitListenerEndpointRegistry listenerRegistry;
 
     private static final String COMPLETIONS_QUEUE = "certificate.lifecycle.completions";
     private static final String DLQ = "cert.events.dlq";
 
+    /** Purges only while no consumer is attached; see {@link ListenerTestSupport}. */
+    @BeforeEach
+    void setUp() {
+        ListenerTestSupport.stopListenersAndAwaitNoConsumer(
+                listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
+        purgeQueues();
+        ListenerTestSupport.startListenersAndAwaitConsumer(
+                listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
+    }
+
     @AfterEach
     void tearDown() {
+        ListenerTestSupport.stopListenersAndAwaitNoConsumer(
+                listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
+        purgeQueues();
+    }
+
+    private void purgeQueues() {
         rabbitAdmin.purgeQueue(DLQ);
         rabbitAdmin.purgeQueue(COMPLETIONS_QUEUE);
     }
@@ -37,9 +57,6 @@ class MalformedCompletionEventDlqTest {
     @Test
     @DisplayName("malformed JSON is dead-lettered (not silently dropped or retried indefinitely)")
     void malformedJsonDeadLettered() {
-        rabbitAdmin.purgeQueue(DLQ);
-        rabbitAdmin.purgeQueue(COMPLETIONS_QUEUE);
-
         String malformedJson = "{invalid json}";
         byte[] messageBytes = malformedJson.getBytes();
         MessageProperties props = new MessageProperties();
@@ -48,7 +65,7 @@ class MalformedCompletionEventDlqTest {
 
         rabbitTemplate.send(COMPLETIONS_QUEUE, message);
 
-        await().atMost(Duration.ofSeconds(10))
+        await().atMost(Duration.ofSeconds(30))
                 .pollInterval(Duration.ofMillis(500))
                 .untilAsserted(
                         () -> {

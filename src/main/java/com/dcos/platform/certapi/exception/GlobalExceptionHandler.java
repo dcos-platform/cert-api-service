@@ -153,13 +153,23 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(InvalidRenewalException.class)
+    public ProblemDetail handleInvalidRenewal(InvalidRenewalException ex) {
+        log.warn("Invalid renewal request: {}", ex.getMessage());
+        ProblemDetail problem =
+                ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problem.setType(URI.create("https://errors.dcos.local/cert-api/invalid-renewal"));
+        problem.setProperty("code", ErrorCode.CERT_INVALID_RENEWAL.name());
+        return problem;
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ProblemDetail handleIllegalArgument(IllegalArgumentException ex) {
         log.warn("Invalid argument: {}", ex.getMessage());
         ProblemDetail problem =
                 ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
-        problem.setType(URI.create("https://errors.dcos.local/cert-api/invalid-renewal"));
-        problem.setProperty("code", ErrorCode.CERT_INVALID_RENEWAL.name());
+        problem.setType(URI.create("https://errors.dcos.local/cert-api/invalid-argument"));
+        problem.setProperty("code", ErrorCode.CERT_INVALID_PARAMETER.name());
         return problem;
     }
 
