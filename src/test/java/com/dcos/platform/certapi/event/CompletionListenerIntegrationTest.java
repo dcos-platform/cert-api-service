@@ -57,7 +57,7 @@ class CompletionListenerIntegrationTest {
 
         String eventId = UUID.randomUUID().toString();
         CompletionEvent event =
-                new CompletionEvent(eventId, cert.getId().toString(), "completed", 0, null);
+                new CompletionEvent(eventId, cert.getId().toString(), "COMPLETED", 0, null);
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
@@ -88,7 +88,7 @@ class CompletionListenerIntegrationTest {
         String eventId = UUID.randomUUID().toString();
         String errorMsg = "signature validation failed";
         CompletionEvent event =
-                new CompletionEvent(eventId, cert.getId().toString(), "failed", 0, errorMsg);
+                new CompletionEvent(eventId, cert.getId().toString(), "FAILED", 0, errorMsg);
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
@@ -119,7 +119,7 @@ class CompletionListenerIntegrationTest {
         String eventId = UUID.randomUUID().toString();
         // First event: completion
         CompletionEvent firstEvent =
-                new CompletionEvent(eventId, cert.getId().toString(), "completed", 0, null);
+                new CompletionEvent(eventId, cert.getId().toString(), "COMPLETED", 0, null);
 
         // Send first event
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, firstEvent);
@@ -142,7 +142,7 @@ class CompletionListenerIntegrationTest {
                 new CompletionEvent(
                         eventId,
                         cert.getId().toString(),
-                        "failed",
+                        "FAILED",
                         0,
                         "this should be ignored due to idempotency");
 
@@ -172,7 +172,7 @@ class CompletionListenerIntegrationTest {
         String retryEventId = originalId + ":retry:2";
 
         CompletionEvent event =
-                new CompletionEvent(retryEventId, cert.getId().toString(), "completed", 2, null);
+                new CompletionEvent(retryEventId, cert.getId().toString(), "COMPLETED", 2, null);
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
@@ -203,7 +203,7 @@ class CompletionListenerIntegrationTest {
 
         String eventId = UUID.randomUUID().toString();
         CompletionEvent event =
-                new CompletionEvent(eventId, cert.getId().toString(), "completed", 0, null);
+                new CompletionEvent(eventId, cert.getId().toString(), "COMPLETED", 0, null);
 
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, event);
 
@@ -236,7 +236,7 @@ class CompletionListenerIntegrationTest {
         // First: send completion event
         String firstEventId = UUID.randomUUID().toString();
         CompletionEvent firstEvent =
-                new CompletionEvent(firstEventId, cert.getId().toString(), "completed", 0, null);
+                new CompletionEvent(firstEventId, cert.getId().toString(), "COMPLETED", 0, null);
         rabbitTemplate.convertAndSend(COMPLETIONS_QUEUE, firstEvent);
 
         await().atMost(Duration.ofSeconds(5))
@@ -264,7 +264,7 @@ class CompletionListenerIntegrationTest {
                 new CompletionEvent(
                         secondEventId,
                         cert.getId().toString(),
-                        "failed",
+                        "FAILED",
                         0,
                         "orchestration failed for other reason");
 
@@ -302,7 +302,7 @@ class CompletionListenerIntegrationTest {
                 new CompletionEvent(
                         firstEventId,
                         cert.getId().toString(),
-                        "failed",
+                        "FAILED",
                         0,
                         "this duplicate should be ignored");
 

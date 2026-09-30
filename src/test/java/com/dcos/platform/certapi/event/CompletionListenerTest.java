@@ -48,7 +48,7 @@ class CompletionListenerTest {
         when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
 
         CompletionEvent event =
-                new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
+                new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
         listener.consume(event, null);
 
         ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
@@ -74,7 +74,7 @@ class CompletionListenerTest {
         when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
 
         CompletionEvent event =
-                new CompletionEvent(eventId, certId.toString(), "failed", 0, errorMsg);
+                new CompletionEvent(eventId, certId.toString(), "FAILED", 0, errorMsg);
         listener.consume(event, null);
 
         ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
@@ -94,7 +94,7 @@ class CompletionListenerTest {
         when(inboxService.recordProcessed(eventId, certId)).thenReturn(false);
 
         CompletionEvent event =
-                new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
+                new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
         listener.consume(event, null);
 
         verify(certificateRepository, never()).findById(any());
@@ -107,7 +107,7 @@ class CompletionListenerTest {
         String eventId = UUID.randomUUID().toString();
         String invalidUuid = "not-a-valid-uuid";
 
-        CompletionEvent event = new CompletionEvent(eventId, invalidUuid, "completed", 0, null);
+        CompletionEvent event = new CompletionEvent(eventId, invalidUuid, "COMPLETED", 0, null);
         listener.consume(event, null);
 
         verify(certificateRepository, never()).findById(any());
@@ -125,7 +125,7 @@ class CompletionListenerTest {
         when(certificateRepository.findById(certId)).thenReturn(Optional.empty());
 
         CompletionEvent event =
-                new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
+                new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
         listener.consume(event, null);
 
         verify(certificateRepository, never()).save(any());
@@ -168,9 +168,82 @@ class CompletionListenerTest {
         when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
 
         CompletionEvent event =
-                new CompletionEvent(retryEventId, certId.toString(), "completed", 1, null);
+                new CompletionEvent(retryEventId, certId.toString(), "COMPLETED", 1, null);
         listener.consume(event, null);
 
         verify(inboxService).recordProcessed(eq(retryEventId), eq(certId));
+    }
+
+    @Test
+    @DisplayName("consume: case-insensitive status comparison (lowercase)")
+    void consumeLowercaseStatus() {
+        UUID certId = UUID.randomUUID();
+        String eventId = UUID.randomUUID().toString();
+
+        Certificate cert = new Certificate();
+        cert.setId(certId);
+        cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
+
+        when(inboxService.recordProcessed(eventId, certId)).thenReturn(true);
+        when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
+
+        CompletionEvent event =
+                new CompletionEvent(eventId, certId.toString(), "completed", 0, null);
+        listener.consume(event, null);
+
+        ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
+        verify(certificateRepository).save(captor.capture());
+
+        Certificate saved = captor.getValue();
+        assertThat(saved.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.COMPLETED);
+    }
+
+    @Test
+    @DisplayName("consume: case-insensitive status comparison (mixed case)")
+    void consumeMixedCaseStatus() {
+        UUID certId = UUID.randomUUID();
+        String eventId = UUID.randomUUID().toString();
+
+        Certificate cert = new Certificate();
+        cert.setId(certId);
+        cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
+
+        when(inboxService.recordProcessed(eventId, certId)).thenReturn(true);
+        when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
+
+        CompletionEvent event =
+                new CompletionEvent(eventId, certId.toString(), "Failed", 0, "test error");
+        listener.consume(event, null);
+
+        ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
+        verify(certificateRepository).save(captor.capture());
+
+        Certificate saved = captor.getValue();
+        assertThat(saved.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.FAILED);
+        assertThat(saved.getLastError()).isEqualTo("test error");
+    }
+
+    @Test
+    @DisplayName("consume: null status (logs warning, no update)")
+    void consumeNullStatus() {
+        UUID certId = UUID.randomUUID();
+        String eventId = UUID.randomUUID().toString();
+
+        Certificate cert = new Certificate();
+        cert.setId(certId);
+        cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
+
+        when(inboxService.recordProcessed(eventId, certId)).thenReturn(true);
+        when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
+
+        CompletionEvent event = new CompletionEvent(eventId, certId.toString(), null, 0, null);
+        listener.consume(event, null);
+
+        ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
+        verify(certificateRepository).save(captor.capture());
+
+        Certificate saved = captor.getValue();
+        assertThat(saved.getOrchestrationStatus())
+                .isEqualTo(OrchestrationStatus.PENDING); // unchanged by null status
     }
 }

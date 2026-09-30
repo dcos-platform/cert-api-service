@@ -108,12 +108,21 @@ public class CompletionListener {
     }
 
     private void applyCompletionStatus(Certificate cert, CompletionEvent event) {
-        if (STATUS_COMPLETED.equals(event.status())) {
+        String status = event.status();
+        if (status == null) {
+            log.warn("Completion event has null status");
+            return;
+        }
+
+        String lowerStatus = status.toLowerCase();
+        if (STATUS_COMPLETED.equals(lowerStatus)) {
             cert.setOrchestrationStatus(OrchestrationStatus.COMPLETED);
             cert.setLastError(null);
-        } else if (STATUS_FAILED.equals(event.status())) {
+        } else if (STATUS_FAILED.equals(lowerStatus)) {
             cert.setOrchestrationStatus(OrchestrationStatus.FAILED);
             cert.setLastError(event.error());
+        } else {
+            log.warn("Unrecognised completion status: status={}", status);
         }
     }
 }
