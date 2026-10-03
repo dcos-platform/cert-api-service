@@ -165,11 +165,101 @@ All tests use the dedicated test database (integration tests) or mocks (unit and
 - Repository tests against real PostgreSQL (schema validation, constraints, queries)
 - Integration tests against real PostgreSQL and RabbitMQ (end-to-end completion consumption, event publishing)
 
+### Integration Status with Sibling Services
+
+| Service | Status | Notes |
+|---------|--------|-------|
+| cert-orchestrator-service | Verified | Integration tested end-to-end (Story 12); works correctly. Case-insensitive status comparison confirmed. |
+| cert-admin-service | Attempted, findings recorded | Integration test run: certificate created, event routed, envelope field mismatch confirmed and fixed for assessment (D1 decision: cert-admin adapts to `certificate_id`). Audit insert failed due to uninitialized schema. All assessment changes reverted. Findings in `docs/ADMIN_FINDINGS.md`. |
+| cert-health-service | Assessed, not integrated | No HTTP client to cert-api; `/expiring` integration unbuilt (verified by code inspection). Deliberate non-integration for 1.0.0; requires service-to-service credential story. Documented in `docs/HEALTH_FINDINGS.md`. |
+| dcos-infra | Assessed | RabbitMQ and PostgreSQL running correctly. Missing databases (`cert_orchestrator`, `cert_admin`, `cert_health_service`) and delayed-message plugin documented in `docs/INFRA_FINDINGS.md`. 322-message backlog on `cert.lifecycle.events` purged for controlled integration test. |
+
 ### End-to-End Verification with the Orchestrator
 
 This procedure runs cert-api together with the Python orchestrator (`cert-orchestrator-service`, a sibling repository) against the shared dcos-infra stack. It has been run end to end: the case-insensitive status comparison in `CompletionListener` was confirmed against the orchestrator's real completions, all of which carry `status` in uppercase.
 
 **Expected outcome:** a certificate is created as `status=ACTIVE` with `orchestrationStatus=PENDING`. Within seconds (about twelve in the reference run) the same certificate reads `status=ACTIVE`, `orchestrationStatus=COMPLETED` and no `lastError`. `status` never changes: cert-api owns `status`, and the orchestrator influences only `orchestrationStatus`.
+
+### Verification with the Published Container Image
+
+**Important:** This verifies that the published container image (the one deployed in production) has never been run by anyone before. Do NOT substitute a local image (`docker build`).
+
+#### 1. Pull the published image
+
+```bash
+docker pull ghcr.io/dcos-platform/cert-api-service:latest
+```
+
+Record the image digest reported by Docker. The expected digest for the Story 14 commit is:
+
+```
+Digest: sha256:b63a64ddfc9c8beb643d8739c4e224aa4195a9079724bce8ed04f041fefbb4fa
+```
+
+If the digest differs from the expected value, stop and report—the image may have been republished or the registry URL is incorrect.
+
+#### 2. Verify no authentication is required
+
+The image should be public. If the pull returns `Unauthorized`, the package visibility changed; stop and report rather than authenticating.
+
+#### 3. Run the published image against the dcos-infra stack
+
+Adminer occupies host port 8080 while the stack is up, so use an alternative port:
+
+```bash
+docker run --rm \
+  --network dcos-net \
+  -e SERVER_PORT=8081 \
+  -e POSTGRES_HOST=postgres \
+  -e RABBITMQ_HOST=rabbitmq \
+  -p 8081:8081 \
+  ghcr.io/dcos-platform/cert-api-service:latest
+```
+
+#### 4. Create a test certificate and observe the state transition
+
+```bash
+curl -X POST http://localhost:8081/api/v1/certificates \
+  -H "Content-Type: application/json" \
+  -u admin:changeme \
+  -d '{
+    "subject": "CN=published-image-test,OU=platform,O=DCOS",
+    "type": "TLS",
+    "issuedBy": "DCOS Demo Authority",
+    "expiresAt": "2027-12-31T00:00:00Z"
+  }'
+```
+
+Note the returned certificate ID and the response timestamp. Expected response: `201 Created`, `status=ACTIVE`, `orchestrationStatus=PENDING`.
+
+Retrieve it after a few seconds:
+
+```bash
+curl -u admin:changeme http://localhost:8081/api/v1/certificates/<id>
+```
+
+Expected: `status` remains `ACTIVE`, but `orchestrationStatus` transitions to `COMPLETED` within ~12 seconds (if the orchestrator is running) or stays `PENDING` (if the orchestrator is not running). Quote the API response and timestamps to confirm.
+
+#### 5. Verify metrics are present and accessible
+
+```bash
+curl -u admin:changeme http://localhost:8081/actuator/prometheus | grep "^cert_"
+```
+
+Expected: 8 metric names producing 23 series across certificate counts (status × type) and outbox state:
+- `cert_certificates_count` (12 series: status × type)
+- `cert_certificates_orchestration_count` (4 series)
+- `cert_certificates_renewal_window_count` (1 series)
+- `cert_outbox_pending_count` (1 series)
+- `cert_outbox_failed_count` (1 series)
+- `cert_outbox_oldest_pending_age_seconds` (1 series)
+- `cert_sweep_transitions_total` (2 series)
+- `cert_completions_duplicates_suppressed_total` (1 series)
+
+Confirm authentication requirements:
+- Unauthenticated access returns `401 Unauthorized`
+- USER role access returns `403 Forbidden` (test with `user`/`password`)
+- ADMIN role access returns `200 OK` and text/plain Prometheus format (test with `admin`/`changeme`)
 
 #### 1. Start the infrastructure stack
 
