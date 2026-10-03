@@ -11,10 +11,12 @@ import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.support.CertificateFixtures;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import jakarta.persistence.EntityManager;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -22,26 +24,129 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-/** Exercises retrieval against the migrated schema and its seed data on real PostgreSQL. */
+/**
+ * Exercises retrieval against the migrated schema with test-owned fixture data on real PostgreSQL.
+ */
 @RequiresTestDatabase
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class CertificateRepositoryTest {
 
-    private static final UUID ALPHA_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
-    private static final UUID ECHO_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
-
     @Autowired private CertificateRepository repository;
 
     @Autowired private EntityManager entityManager;
 
-    @Test
-    void findById_mapsEveryColumnOfASeededCertificate() {
-        Certificate alpha = repository.findById(ALPHA_ID).orElseThrow();
+    @Autowired private JdbcTemplate jdbcTemplate;
 
-        assertThat(alpha.getSerialNumber()).isEqualTo("DCOS-2026-A1B2C3D4E5F6");
-        assertThat(alpha.getSubject()).isEqualTo("CN=service-alpha,OU=platform,O=DCOS");
+    private UUID alphaId;
+    private UUID bravoId;
+    private UUID charlieId;
+    private UUID deltaId;
+    private UUID echoId;
+
+    @BeforeEach
+    void insertTestCertificates() {
+        alphaId = UUID.randomUUID();
+        bravoId = UUID.randomUUID();
+        charlieId = UUID.randomUUID();
+        deltaId = UUID.randomUUID();
+        echoId = UUID.randomUUID();
+
+        Instant now = Instant.now();
+        Instant issuedAt = now.minus(90, ChronoUnit.DAYS);
+        Instant expiresAt = now.plus(275, ChronoUnit.DAYS);
+        String alphaSerial = "TEST-" + alphaId;
+        String bravoSerial = "TEST-" + bravoId;
+        String charlieSerial = "TEST-" + charlieId;
+        String deltaSerial = "TEST-" + deltaId;
+        String echoSerial = "TEST-" + echoId;
+
+        insertCertificate(
+                alphaId,
+                alphaSerial,
+                "CN=service-alpha-test,OU=test,O=DCOS",
+                "service-alpha",
+                "TLS",
+                "ACTIVE",
+                "COMPLETED",
+                issuedAt,
+                expiresAt);
+        insertCertificate(
+                bravoId,
+                bravoSerial,
+                "CN=service-bravo-test,OU=test,O=DCOS",
+                "service-bravo",
+                "TLS",
+                "ACTIVE",
+                "COMPLETED",
+                issuedAt,
+                expiresAt);
+        insertCertificate(
+                charlieId,
+                charlieSerial,
+                "CN=service-charlie-test,OU=test,O=DCOS",
+                "service-charlie",
+                "TLS",
+                "ACTIVE",
+                "COMPLETED",
+                issuedAt,
+                expiresAt);
+        insertCertificate(
+                deltaId,
+                deltaSerial,
+                "CN=service-delta-test,OU=test,O=DCOS",
+                "service-delta",
+                "TLS",
+                "ACTIVE",
+                "COMPLETED",
+                issuedAt,
+                expiresAt);
+        insertCertificate(
+                echoId,
+                echoSerial,
+                "CN=service-echo-test,OU=test,O=DCOS",
+                "service-echo",
+                "TLS",
+                "ACTIVE",
+                "COMPLETED",
+                issuedAt,
+                expiresAt);
+    }
+
+    private void insertCertificate(
+            UUID id,
+            String serialNumber,
+            String subject,
+            String commonName,
+            String type,
+            String status,
+            String orchestrationStatus,
+            Instant issuedAt,
+            Instant expiresAt) {
+        String sql =
+                "INSERT INTO dcos_certificates.certificates (id, serial_number, subject, common_name, type, status, orchestration_status, issued_by, issued_at, expires_at, renewal_window_days, requested_by, version) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, 'DCOS Demo Authority', ?, ?, 30, 'seed', 0)";
+        jdbcTemplate.update(
+                sql,
+                id,
+                serialNumber,
+                subject,
+                commonName,
+                type,
+                status,
+                orchestrationStatus,
+                Timestamp.from(issuedAt),
+                Timestamp.from(expiresAt));
+    }
+
+    @Test
+    void findById_mapsEveryColumnOfATestCertificate() {
+        Certificate alpha = repository.findById(alphaId).orElseThrow();
+
+        assertThat(alpha.getSerialNumber()).isEqualTo("TEST-" + alphaId);
+        assertThat(alpha.getSubject()).isEqualTo("CN=service-alpha-test,OU=test,O=DCOS");
         assertThat(alpha.getCommonName()).isEqualTo("service-alpha");
         assertThat(alpha.getType()).isEqualTo(CertificateType.TLS);
         assertThat(alpha.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
@@ -60,16 +165,12 @@ class CertificateRepositoryTest {
     }
 
     @Test
-    void findAll_returnsTheFiveSeededCertificates() {
-        List<UUID> ids = repository.findAll().stream().map(Certificate::getId).toList();
+    void findAll_returnsTheTestCertificates() {
+        var allCerts = repository.findAll();
 
-        assertThat(ids)
-                .contains(
-                        ALPHA_ID,
-                        UUID.fromString("22222222-2222-4222-8222-222222222222"),
-                        UUID.fromString("33333333-3333-4333-8333-333333333333"),
-                        UUID.fromString("44444444-4444-4444-8444-444444444444"),
-                        ECHO_ID);
+        assertThat(allCerts)
+                .extracting(Certificate::getId)
+                .contains(alphaId, bravoId, charlieId, deltaId, echoId);
     }
 
     @Test
@@ -79,18 +180,23 @@ class CertificateRepositoryTest {
         List<Certificate> active = repository.findByStatus(CertificateStatus.ACTIVE);
         List<Certificate> revokedOnly = repository.findByStatus(CertificateStatus.REVOKED);
 
-        assertThat(active).extracting(Certificate::getId).contains(ALPHA_ID, ECHO_ID);
+        assertThat(active)
+                .extracting(Certificate::getId)
+                .contains(alphaId, bravoId, charlieId, deltaId, echoId);
         assertThat(active)
                 .extracting(Certificate::getStatus)
                 .containsOnly(CertificateStatus.ACTIVE);
-        assertThat(revokedOnly).extracting(Certificate::getId).containsExactly(revoked.getId());
+        assertThat(revokedOnly).extracting(Certificate::getId).contains(revoked.getId());
+        assertThat(revokedOnly)
+                .extracting(Certificate::getStatus)
+                .containsOnly(CertificateStatus.REVOKED);
     }
 
     @Test
     void findBySubjectContainingIgnoreCase_matchesRegardlessOfCase() {
-        List<Certificate> found = repository.findBySubjectContainingIgnoreCase("SERVICE-ECHO");
+        List<Certificate> found = repository.findBySubjectContainingIgnoreCase("SERVICE-ECHO-TEST");
 
-        assertThat(found).extracting(Certificate::getId).containsExactly(ECHO_ID);
+        assertThat(found).extracting(Certificate::getId).containsExactly(echoId);
     }
 
     @Test
@@ -130,17 +236,19 @@ class CertificateRepositoryTest {
     }
 
     @Test
-    void findAll_withSpecification_returnsEmptyWhenNoMatch() {
-        Specification<Certificate> noMatch =
+    void findAll_withSpecification_returnsOnlyMatchingRows() {
+        Certificate testRevoked = repository.saveAndFlush(CertificateFixtures.revoked());
+        Specification<Certificate> revokedSpec =
                 (root, query, cb) -> cb.equal(root.get("status"), CertificateStatus.REVOKED);
 
-        Page<Certificate> result = repository.findAll(noMatch, PageRequest.of(0, 10));
+        Page<Certificate> result = repository.findAll(revokedSpec, PageRequest.of(0, 10));
 
-        assertThat(result.getContent()).isEmpty();
-        assertThat(result.getTotalElements()).isZero();
-        assertThat(result.getTotalPages()).isZero();
-        assertThat(result.isFirst()).isTrue();
-        assertThat(result.isLast()).isTrue();
+        assertThat(result.getContent())
+                .extracting(Certificate::getId)
+                .contains(testRevoked.getId());
+        assertThat(result.getContent())
+                .extracting(Certificate::getStatus)
+                .containsOnly(CertificateStatus.REVOKED);
     }
 
     @Test

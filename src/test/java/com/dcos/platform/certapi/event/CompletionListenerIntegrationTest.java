@@ -13,6 +13,8 @@ import com.dcos.platform.certapi.support.CertificateFixtures;
 import com.dcos.platform.certapi.support.ListenerTestSupport;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -38,6 +40,8 @@ class CompletionListenerIntegrationTest {
     @Autowired private RabbitListenerEndpointRegistry listenerRegistry;
     @Autowired private CertificateRepository certificateRepository;
     @Autowired private ProcessedCompletionRepository processedCompletionRepository;
+
+    private final List<UUID> createdCertificateIds = new ArrayList<>();
 
     /**
      * Generous ceiling for a message to be consumed and its effect to land in the database.
@@ -65,6 +69,7 @@ class CompletionListenerIntegrationTest {
      */
     @BeforeEach
     void setupTest() {
+        createdCertificateIds.clear();
         ListenerTestSupport.stopListenersAndAwaitNoConsumer(
                 listenerRegistry, rabbitAdmin, COMPLETIONS_QUEUE);
         purgeAndReset();
@@ -83,7 +88,7 @@ class CompletionListenerIntegrationTest {
         rabbitAdmin.purgeQueue(COMPLETIONS_QUEUE);
         rabbitAdmin.purgeQueue(DLQ);
         processedCompletionRepository.deleteAll();
-        certificateRepository.deleteAll();
+        createdCertificateIds.forEach(certificateRepository::deleteById);
     }
 
     /**
@@ -128,6 +133,7 @@ class CompletionListenerIntegrationTest {
         Certificate cert = CertificateFixtures.active();
         cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         certificateRepository.save(cert);
+        createdCertificateIds.add(cert.getId());
 
         String eventId = UUID.randomUUID().toString();
         CompletionEvent event =
@@ -150,6 +156,7 @@ class CompletionListenerIntegrationTest {
         Certificate cert = CertificateFixtures.active();
         cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         certificateRepository.save(cert);
+        createdCertificateIds.add(cert.getId());
 
         String eventId = UUID.randomUUID().toString();
         String errorMsg = "signature validation failed";
@@ -173,6 +180,7 @@ class CompletionListenerIntegrationTest {
         Certificate cert = CertificateFixtures.active();
         cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         certificateRepository.save(cert);
+        createdCertificateIds.add(cert.getId());
 
         String eventId = UUID.randomUUID().toString();
         // First event: completion
@@ -257,6 +265,7 @@ class CompletionListenerIntegrationTest {
         Certificate cert = CertificateFixtures.active();
         cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         certificateRepository.save(cert);
+        createdCertificateIds.add(cert.getId());
 
         String originalId = UUID.randomUUID().toString();
         String retryEventId = originalId + ":retry:2";
@@ -290,6 +299,7 @@ class CompletionListenerIntegrationTest {
         cert.setSubject(NONNATIVE_SUBJECT);
         cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         certificateRepository.save(cert);
+        createdCertificateIds.add(cert.getId());
 
         String eventId = UUID.randomUUID().toString();
         CompletionEvent event =
@@ -313,6 +323,7 @@ class CompletionListenerIntegrationTest {
         Certificate cert = CertificateFixtures.active();
         cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         certificateRepository.save(cert);
+        createdCertificateIds.add(cert.getId());
 
         // First: send completion event
         String firstEventId = UUID.randomUUID().toString();

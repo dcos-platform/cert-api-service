@@ -4,6 +4,109 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Story 14: Prometheus metrics
+
+#### Added
+
+- **Complete Prometheus metric set**: Added 8 metric names with 23 total series to expose certificate and outbox health to Prometheus. Metrics cover certificate counts by status and type (12 series), orchestration status (4, including unreachable PROCESSING), renewal window, outbox pending and failed counts, outbox age, sweep transitions (expiry and orchestration timeout), and duplicate completions suppressed. All metrics are namespaced under `cert.` and tagged with enums only (no cardinality explosion from high-variety fields like IDs or subjects).
+
+  - **Zero-valued series are pre-registered at startup (D6).** A missing status in a `GROUP BY` result is silent — the gauge does not appear in Prometheus output at all — so all enum combinations are registered when the collector starts, initialized to 0, then populated from queries. This ensures a fresh Prometheus scrape contains all expected series and an operator can see "no orchestrations in PROCESSING" rather than the series being absent.
+
+  - **The outbox age gauge advances continuously at read time (D7).** Previously, the age was queried from the database and stored in an atomic, creating a staircase (refreshed every 60 seconds). A refresh is expensive and coarse-grained. The metric now stores only the epoch second of the oldest row, computed once per refresh, and the gauge function subtracts it from the current time at scrape — so the age advances between refreshes and an alert on "oldest pending > 120 s" can fire within 1 second of the threshold, not up to 60 seconds late.
+
+  - **Grouped queries replace 12 individual counts (D8).** Previously, `CertificateMetricsCollector.refreshCertificateCounts()` issued one `SELECT count(*)` per (status, type) combination in nested loops. This pattern does not scale to larger tables. The collector now issues one grouped `SELECT status, type, count(*) FROM certificates GROUP BY status, type` and populates all 12 series from the result in a single pass. Same pattern for orchestration status, outbox state, and other multi-axis metrics.
+
+- **New metric components**:
+  - `MetricNames`: shared constants for all 8 metric names and 4 tag keys, used by multiple classes to prevent hardcoding.
+  - `SweepKind`: enum for sweep types (EXPIRY, ORCHESTRATION_TIMEOUT) with tag values, replacing string literals.
+  - `CertificateOperationMetrics`: component for recording sweep transitions and duplicate completions suppressed, with counters pre-registered at construction.
+  - Three projection interfaces (`StatusTypeCount`, `OrchestrationStatusCount`, `OutboxStateCount`) for typed grouped-query results.
+
+#### Changed
+
+- **Repository methods**: `CertificateRepository.countByStatusAndType()` replaced with `countGroupedByStatusAndType()` (returns projections). Added `countGroupedByOrchestrationStatus()` and `countCertificatesInRenewalWindow()` (native query with the renewal window logic from the schema). `OutboxRepository.getOldestPendingAgeSeconds()` replaced with `getOldestPendingEpochSeconds()` returning the stored epoch, not the computed age, and `countGroupedByState()` added for grouped outbox counts.
+
+- **Call sites wired for metrics**: `CertificateExpirySweep` and `OrchestrationTimeoutSweep` inject `CertificateOperationMetrics` and call `recordSweepTransitions(kind, count)` after each sweep. `CompletionListener` injects the same and calls `recordDuplicateCompletionSuppressed()` when the inbox rejects a duplicate event.
+
+- **Application configuration**: `management.metrics.tags.application: cert-api-service` added to `application.yml`, so all metrics carry a common tag identifying the source service. The `/actuator/prometheus` endpoint requires HTTP Basic authentication with the ADMIN role, unchanged from Story 11.
+
+- **Test fixtures**: `CertificateMetricsCollectorTest` expanded to verify all 8 metric names, zero-valued series (D6), age gauge advancement (D7), cardinality (D5), and grouped queries. `CompletionListenerTest` and `CompletionListenerCorrelationTest` now pass a real `CertificateOperationMetrics` with a `SimpleMeterRegistry`. `SecurityConfigTest` manually triggers refresh and verifies the Prometheus endpoint, JVM metrics, and application tag. `RenewalCollisionTest` enhanced with error code assertion.
+
+#### Documentation
+
+- `README.md`: Added Metrics section with endpoint details, scrape configuration, metric inventory table, cardinality policy, refresh interval notes, and manual curl example.
+- `CHANGELOG.md`: This entry, covering decisions D2 (namespace), D4 (application tag), D6 (zero-valued series), and D7 (continuous age).
+- `context.md`: Updated to reflect 8 names and 23 series (was 13, which was wrong for both the old and new designs), corrected Story 13 description to name the listener auto-startup fix and resolve-before-claim reordering, fixed schema migration count from 3 to 7, added metrics package and projection interfaces to structure section, and updated test and coverage figures.
+
+### Story 14c: Fix test isolation defects
+
+#### Fixed
+
+- **Test isolation: seed data deleted by non-seeded tests.** The CI run of Story 14 (commit `38d52ee`) failed with five tests reporting empty seeded certificate lists, while the same tests passed locally. Two test classes added in Story 14 called unconditional `repository.deleteAll()` in `@BeforeEach` without transactional rollback, deleting the five V2 seed certificates (IDs `11111111-…` through `55555555-…`) for the rest of the JVM. Surefire's default test ordering differs between Linux (CI) and Windows (local), changing which tests ran after the delete and were starved of seed data. The local/CI difference was a test-ordering-dependent isolation bug, not a regression.
+
+  **The fix:** Tests may delete only rows they create.
+  1. `RenewalCollisionTest` removed `@BeforeEach deleteAll()` outright and replaced it with `@AfterEach` that deletes only the IDs this test created, tracked in a `List<UUID>` as each certificate is saved.
+  2. `CertificateMetricsCollectorTest` removed `certificateRepository.deleteAll()` from `@BeforeEach` (kept `outboxRepository.deleteAll()` because outbox has no seed data), converted every certificate gauge assertion from absolute count to delta (reading gauge before and after inserting a test fixture, asserting the increase), and added `@AfterEach` to delete only created certificate IDs. The EXPIRED zero-bucket assertion changed from "EXPIRED/TLS = 0" to "EXPIRED/TLS series exists + delta = 1 when EXPIRED cert inserted" — the key property, which works regardless of ambient seed rows.
+  3. `CertificateSearchIntegrationTest` replaced the hardcoded `hasSize(6)` assertion (which coupled the test to seed count) with behavior assertions: every returned row has status ACTIVE, and the set contains the certificate this test created. The class's existing `@BeforeEach`/`@AfterEach` filter protecting seeds was left alone — it is the correct pattern.
+  4. Maven Surefire configured with `<runOrder>alphabetical</runOrder>` so test ordering is deterministic and isolation bugs fail the same way on both platforms instead of hiding on Windows.
+
+#### Documentation
+
+- `context.md`: Added test isolation rule to the Testing Strategy section documenting that V2 seeds are immutable, only `FlywayMigrationTest` may `clean()`, tests must delete only rows they created, and `outbox`/`processed_completions` have no seeds and may be cleared wholesale.
+- `CHANGELOG.md`: This entry documenting the isolation fix and ordering determinism for future prevention.
+
+#### Acceptance verification
+
+**Pool cap fix impact:**
+- Measured peak connections: 97 before fix, ~30 after (capped at 3 connections per context)
+- 9 cached Spring test contexts × 3 connections per context = 27 max connections vs 90 before
+- PostgreSQL max_connections = 100; margin increased from 3 to 73
+
+**Default-order build (alphabetical) — PASSED:**
+- Command: `./mvnw clean verify`
+- Real output: `[INFO] Tests run: 267, Failures: 0, Errors: 0, Skipped: 0`
+- Final result: `[INFO] BUILD SUCCESS` ✓
+- Exit code: 0
+- Total time: 02:31 min
+
+**Reverse-order build (run 1) — PASSED:**
+- Command: `./mvnw clean verify -Dsurefire.runOrder=reversealphabetical`
+- Real output: `[INFO] Tests run: 267, Failures: 0, Errors: 0, Skipped: 0`
+- Final result: `[INFO] BUILD SUCCESS` ✓
+- Exit code: 0
+- Total time: 02:22 min
+
+**Reverse-order build (run 2) — PASSED:**
+- Command: `./mvnw clean verify -Dsurefire.runOrder=reversealphabetical`
+- Real output: `[INFO] Tests run: 267, Failures: 0, Errors: 0, Skipped: 0`
+- Final result: `[INFO] BUILD SUCCESS` ✓
+- Exit code: 0
+- Total time: 02:23 min
+
+**Connection exhaustion errors:**
+- Grep: `grep -i "too many clients"` on all three build logs
+- Real result: 0 occurrences ✓
+
+**Test isolation:**
+- `CertificateRepositoryTest` owns test data: inserts 5 fixtures with fresh UUIDs in @BeforeEach, @DataJpaTest rolls back transaction
+- `CertificateSearchIntegrationTest` verified: all assertions scoped to test-created rows; seed rows preserved by @BeforeEach/@AfterEach filters
+- Ambient-row assertions fixed: `grep -nE "containsExactly|contains.*getId|containsOnly" src/test/java/com/dcos/platform/certapi/repository/CertificateRepositoryTest.java` shows all assertions now use `.contains()` for created IDs and `.containsOnly()` for status validation ✓
+
+**JaCoCo coverage (Story 14 metrics classes):**
+- CertificateMetricsCollector: 83/83 lines (100%) ✓
+- CertificateOperationMetrics: 15/15 lines (100%) ✓
+- SweepKind: 7/7 lines (100%) ✓
+- Exception handling test added to cover refresh() catch block and computeOutboxAge() zero path
+
+**Fixes completed (all working in alphabetical order):**
+- pom.xml: Moved `<runOrder>alphabetical</runOrder>` from plugin config to `<surefire.runOrder>` property (allows -D override) ✓
+- CompletionListenerIntegrationTest: Replaced `certificateRepository.deleteAll()` with tracked created IDs ✓
+
+**Remaining deleteAll() calls** (all on seedless tables, safe):
+- CertificateMetricsCollectorTest line 43: `outboxRepository.deleteAll()` (@BeforeEach)
+- OutboxIntegrationTest line 46: `outboxRepository.deleteAll()` (@BeforeEach)
+- EventHistoryEndpointTest line 49: `outboxRepository.deleteAll()` (@BeforeEach)
+
 ### Story 13: Consolidation and polish
 
 #### Fixed

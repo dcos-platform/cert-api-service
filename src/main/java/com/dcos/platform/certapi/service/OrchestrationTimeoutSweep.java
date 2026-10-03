@@ -2,6 +2,8 @@ package com.dcos.platform.certapi.service;
 
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
+import com.dcos.platform.certapi.metrics.CertificateOperationMetrics;
+import com.dcos.platform.certapi.metrics.SweepKind;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import java.time.Duration;
 import java.time.Instant;
@@ -30,6 +32,7 @@ public class OrchestrationTimeoutSweep {
     private static final String ERROR_ORCHESTRATION_TIMEOUT = "orchestration timed out";
 
     private final CertificateRepository repository;
+    private final CertificateOperationMetrics operationMetrics;
 
     @Value("${cert-api.orchestration.pending-timeout:PT2M}")
     private String pendingTimeoutConfig;
@@ -63,6 +66,8 @@ public class OrchestrationTimeoutSweep {
                 }
             }
         }
+
+        operationMetrics.recordSweepTransitions(SweepKind.ORCHESTRATION_TIMEOUT, totalProcessed);
 
         if (totalProcessed > 0) {
             log.info(

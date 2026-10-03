@@ -580,6 +580,78 @@ The test database is external and persistent — tests clean up their data so th
 
 Listener auto-startup is disabled in tests to prevent consuming from the live broker. Unit tests call the `CompletionListener` directly with mocked repository collaborators. Integration tests publish actual completion events to the RabbitMQ broker and verify the listener updates the database, including testing idempotency (duplicate events), error handling, and non-ASCII subject preservation.
 
+## Metrics
+
+This service exposes Prometheus metrics at `/actuator/prometheus`. The endpoint requires HTTP Basic authentication with the `ADMIN` role.
+
+### Endpoint
+
+- **URL:** `/actuator/prometheus`
+- **Method:** GET
+- **Content-Type:** `text/plain; charset=utf-8; version=0.0.4`
+- **Authentication:** HTTP Basic, ADMIN role required
+- **Unauthenticated:** 401 Unauthorized
+- **USER role:** 403 Forbidden
+
+### Example
+
+```bash
+SERVER_PORT=8081  # Match application.yml server.port
+curl -u admin:changeme http://localhost:${SERVER_PORT}/actuator/prometheus | grep "^cert_"
+```
+
+### Scrape Configuration
+
+For Prometheus, add to `scrape_configs`:
+
+```yaml
+- job_name: 'cert-api-service'
+  static_configs:
+    - targets: ['localhost:8081']
+  basic_auth:
+    username: 'admin'
+    password: 'changeme'
+  scrape_interval: '15s'
+```
+
+### Metric Inventory
+
+| # | Name | Type | Tags | Series | Purpose |
+|---|------|------|------|--------|---------|
+| 1 | `cert_certificates_count` | Gauge | `status` (3), `type` (4) | 12 | Certificate counts by status and type |
+| 2 | `cert_certificates_orchestration_count` | Gauge | `orchestration.status` (4) | 4 | Certificates by orchestrator status (PROCESSING always 0) |
+| 3 | `cert_certificates_renewal_window_count` | Gauge | — | 1 | Certificates in renewal window |
+| 4 | `cert_outbox_pending_count` | Gauge | — | 1 | Pending events in outbox |
+| 5 | `cert_outbox_failed_count` | Gauge | — | 1 | Failed events in outbox |
+| 6 | `cert_outbox_oldest_pending_age_seconds` | Gauge | — | 1 | Age of oldest pending outbox entry |
+| 7 | `cert_sweep_transitions_total` | Counter | `sweep` (2: expiry, orchestration.timeout) | 2 | Certificates transitioned per sweep |
+| 8 | `cert_completions_duplicates_suppressed_total` | Counter | — | 1 | Duplicate completions discarded |
+
+**Total:** 8 metric names, 23 series
+
+### Cardinality
+
+All metric labels come from enums:
+- Certificate status: `ACTIVE`, `EXPIRED`, `REVOKED`
+- Certificate type: `TLS`, `CLIENT`, `CA`, `CODE_SIGNING`
+- Orchestration status: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`
+- Outbox state: `PENDING`, `SENT`, `FAILED`
+- Sweep kind: `expiry`, `orchestration.timeout`
+
+**No label value is a certificate ID, subject, serial, correlation ID, or error text.**
+
+### Refresh Interval
+
+Gauges are updated on a schedule (default 60 seconds, configurable via `cert-api.metrics.refresh-interval`). They may be up to that interval stale, except the outbox age gauge, which advances continuously at read time without waiting for a refresh.
+
+### Infrastructure
+
+The DCOS platform does not yet have a centralized Prometheus server. Scraping is manual:
+
+```bash
+SERVER_PORT=8081 curl -s -u admin:changeme http://localhost:${SERVER_PORT}/actuator/prometheus
+```
+
 ## Building and Deploying
 
 ### Docker Image

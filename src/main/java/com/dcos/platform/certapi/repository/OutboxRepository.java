@@ -39,4 +39,32 @@ public interface OutboxRepository extends JpaRepository<Outbox, Long> {
      * @return a page of outbox rows for the certificate
      */
     Page<Outbox> findByAggregateIdOrderByCreatedAtDesc(UUID aggregateId, Pageable pageable);
+
+    /**
+     * Counts outbox entries grouped by state for metrics collection.
+     *
+     * @return list of state combinations with their counts
+     */
+    @Query("select o.state as state, count(o) as count " + "from Outbox o group by o.state")
+    List<OutboxStateCount> countGroupedByState();
+
+    /**
+     * Returns the epoch second of the oldest pending outbox entry, or null if none exist. The
+     * returned value is stored as-is and is meant to be subtracted from the current epoch second at
+     * read time to compute age, allowing the age to advance continuously between refreshes.
+     *
+     * <p>Note: outbox.created_at is TIMESTAMP in UTC (written by Hibernate as UTC), so this query
+     * correctly computes epoch seconds from it.
+     *
+     * @return epoch second of oldest pending row, or null if no pending rows
+     */
+    @Query(
+            value =
+                    "SELECT CAST(EXTRACT(EPOCH FROM o.created_at) AS bigint) "
+                            + "FROM dcos_certificates.outbox o "
+                            + "WHERE o.state = 'PENDING' "
+                            + "ORDER BY o.created_at ASC "
+                            + "LIMIT 1",
+            nativeQuery = true)
+    Long getOldestPendingEpochSeconds();
 }

@@ -7,6 +7,7 @@ import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.support.CertificateFixtures;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -27,6 +28,7 @@ class OrchestrationTimeoutSweepTest {
     @Autowired private OrchestrationTimeoutSweep sweep;
     @Autowired private CertificateRepository repository;
     @Autowired private EntityManager entityManager;
+    @Autowired private MeterRegistry meterRegistry;
 
     @Test
     @Transactional
@@ -49,6 +51,16 @@ class OrchestrationTimeoutSweepTest {
         Certificate recentCert = CertificateFixtures.active();
         recentCert.setOrchestrationStatus(OrchestrationStatus.PENDING);
         repository.save(recentCert);
+
+        // T2: Record counter before sweep (per-tag)
+        double countBefore =
+                meterRegistry
+                        .find("cert.sweep.transitions")
+                        .tag("sweep", "orchestration.timeout")
+                        .counters()
+                        .stream()
+                        .mapToDouble(c -> c.count())
+                        .sum();
 
         // Run sweep
         sweep.sweep();
@@ -76,6 +88,17 @@ class OrchestrationTimeoutSweepTest {
                                     .isEqualTo(OrchestrationStatus.PENDING);
                             assertThat(c.getLastError()).isNull();
                         });
+
+        // T2: Verify counter incremented by 1 (delta-based, per-tag)
+        double countAfter =
+                meterRegistry
+                        .find("cert.sweep.transitions")
+                        .tag("sweep", "orchestration.timeout")
+                        .counters()
+                        .stream()
+                        .mapToDouble(c -> c.count())
+                        .sum();
+        assertThat(countAfter - countBefore).isEqualTo(1.0);
     }
 
     @Test

@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -52,4 +53,40 @@ public interface CertificateRepository
      */
     List<Certificate> findByOrchestrationStatusAndUpdatedAtBefore(
             OrchestrationStatus orchestrationStatus, Instant cutoff, Pageable pageable);
+
+    /**
+     * Counts certificates grouped by status and type for metrics collection.
+     *
+     * @return list of status-type combinations with their counts
+     */
+    @Query(
+            "select c.status as status, c.type as type, count(c) as count "
+                    + "from Certificate c group by c.status, c.type")
+    List<StatusTypeCount> countGroupedByStatusAndType();
+
+    /**
+     * Counts certificates grouped by orchestration status for metrics collection.
+     *
+     * @return list of orchestration-status combinations with their counts
+     */
+    @Query(
+            "select c.orchestrationStatus as orchestrationStatus, count(c) as count "
+                    + "from Certificate c group by c.orchestrationStatus")
+    List<OrchestrationStatusCount> countGroupedByOrchestrationStatus();
+
+    /**
+     * Counts certificates that are ACTIVE, within their renewal window, and not yet expired. A
+     * certificate is in its renewal window if it is ACTIVE, expires after now, and expires within
+     * (now + renewal_window_days).
+     *
+     * @return count of certificates in renewal window
+     */
+    @Query(
+            value =
+                    "SELECT COUNT(*) FROM dcos_certificates.certificates c "
+                            + "WHERE c.status = 'ACTIVE' "
+                            + "AND c.expires_at > NOW() AT TIME ZONE 'UTC' "
+                            + "AND c.expires_at <= (NOW() AT TIME ZONE 'UTC') + (c.renewal_window_days * INTERVAL '1 day')",
+            nativeQuery = true)
+    long countCertificatesInRenewalWindow();
 }
