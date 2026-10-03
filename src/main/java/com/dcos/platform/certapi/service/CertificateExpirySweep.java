@@ -4,6 +4,8 @@ import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.event.EventType;
 import com.dcos.platform.certapi.event.OutboxEnqueueService;
+import com.dcos.platform.certapi.metrics.CertificateOperationMetrics;
+import com.dcos.platform.certapi.metrics.SweepKind;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import java.time.Instant;
 import java.util.List;
@@ -28,11 +30,15 @@ public class CertificateExpirySweep {
 
     private final CertificateRepository repository;
     private final OutboxEnqueueService outboxEnqueueService;
+    private final CertificateOperationMetrics operationMetrics;
 
     public CertificateExpirySweep(
-            CertificateRepository repository, OutboxEnqueueService outboxEnqueueService) {
+            CertificateRepository repository,
+            OutboxEnqueueService outboxEnqueueService,
+            CertificateOperationMetrics operationMetrics) {
         this.repository = repository;
         this.outboxEnqueueService = outboxEnqueueService;
+        this.operationMetrics = operationMetrics;
     }
 
     @Scheduled(fixedDelayString = "${cert-api.expiry-sweep-interval:300000}")
@@ -60,6 +66,8 @@ public class CertificateExpirySweep {
                 }
             }
         }
+
+        operationMetrics.recordSweepTransitions(SweepKind.EXPIRY, totalProcessed);
 
         if (totalProcessed > 0) {
             log.info("Expiry sweep completed: {} certificates moved to EXPIRED", totalProcessed);

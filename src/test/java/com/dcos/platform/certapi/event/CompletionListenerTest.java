@@ -11,7 +11,9 @@ import static org.mockito.Mockito.when;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
+import com.dcos.platform.certapi.metrics.CertificateOperationMetrics;
 import com.dcos.platform.certapi.repository.CertificateRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +35,9 @@ class CompletionListenerTest {
 
     @BeforeEach
     void setUp() {
-        listener = new CompletionListener(certificateRepository, inboxService);
+        CertificateOperationMetrics operationMetrics =
+                new CertificateOperationMetrics(new SimpleMeterRegistry());
+        listener = new CompletionListener(certificateRepository, inboxService, operationMetrics);
     }
 
     @Test
@@ -256,5 +260,46 @@ class CompletionListenerTest {
         Certificate saved = captor.getValue();
         assertThat(saved.getOrchestrationStatus())
                 .isEqualTo(OrchestrationStatus.PENDING); // unchanged by null status
+    }
+
+    @Test
+    @DisplayName("T3: duplicate completion (same event id) is suppressed, counter equals 1")
+    void consumeDuplicateCompletionIsSuppressed() {
+        UUID certId = UUID.randomUUID();
+        String eventId = UUID.randomUUID().toString();
+
+        Certificate cert = new Certificate();
+        cert.setId(certId);
+        cert.setOrchestrationStatus(OrchestrationStatus.PENDING);
+
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        CertificateOperationMetrics operationMetrics = new CertificateOperationMetrics(registry);
+        listener = new CompletionListener(certificateRepository, inboxService, operationMetrics);
+
+        when(certificateRepository.findById(certId)).thenReturn(Optional.of(cert));
+        when(inboxService.recordProcessed(eventId, certId))
+                .thenReturn(true) // First call succeeds (new event)
+                .thenReturn(false); // Second call returns false (duplicate detected)
+
+        // First completion event
+        CompletionEvent event1 =
+                new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
+        listener.consume(event1, null);
+
+        // Second completion event with same eventId (duplicate)
+        CompletionEvent event2 =
+                new CompletionEvent(eventId, certId.toString(), "COMPLETED", 0, null);
+        listener.consume(event2, null);
+
+        // Verify certificate was saved exactly once (from the first, non-duplicate event)
+        ArgumentCaptor<Certificate> captor = ArgumentCaptor.forClass(Certificate.class);
+        verify(certificateRepository).save(captor.capture()); // Only called once, not twice
+
+        Certificate saved = captor.getValue();
+        assertThat(saved.getOrchestrationStatus()).isEqualTo(OrchestrationStatus.COMPLETED);
+
+        // T3: Verify the counter was incremented to 1
+        assertThat(registry.get("cert.completions.duplicates.suppressed").counter().count())
+                .isEqualTo(1.0);
     }
 }

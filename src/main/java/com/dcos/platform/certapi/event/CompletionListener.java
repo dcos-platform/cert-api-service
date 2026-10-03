@@ -4,6 +4,7 @@ import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.exception.CertificateNotFoundException;
 import com.dcos.platform.certapi.logging.LoggingContext;
+import com.dcos.platform.certapi.metrics.CertificateOperationMetrics;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,6 +29,7 @@ public class CompletionListener {
 
     private final CertificateRepository certificateRepository;
     private final CompletionInboxService inboxService;
+    private final CertificateOperationMetrics operationMetrics;
 
     /**
      * Consumes a completion event from {@code certificate.lifecycle.completions}.
@@ -97,6 +99,7 @@ public class CompletionListener {
             // Claim the event id. Zero rows inserted means this event was already processed.
             if (!inboxService.recordProcessed(event.eventId(), certificateId)) {
                 log.debug("Duplicate completion event: eventId={}", event.eventId());
+                operationMetrics.recordDuplicateCompletionSuppressed();
                 return;
             }
 

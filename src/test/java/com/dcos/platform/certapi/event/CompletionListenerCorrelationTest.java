@@ -7,7 +7,9 @@ import static org.mockito.Mockito.when;
 import com.dcos.platform.certapi.domain.Certificate;
 import com.dcos.platform.certapi.domain.OrchestrationStatus;
 import com.dcos.platform.certapi.logging.LoggingContext;
+import com.dcos.platform.certapi.metrics.CertificateOperationMetrics;
 import com.dcos.platform.certapi.repository.CertificateRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,7 +32,9 @@ class CompletionListenerCorrelationTest {
 
     @BeforeEach
     void setUp() {
-        listener = new CompletionListener(certificateRepository, inboxService);
+        CertificateOperationMetrics operationMetrics =
+                new CertificateOperationMetrics(new SimpleMeterRegistry());
+        listener = new CompletionListener(certificateRepository, inboxService, operationMetrics);
         MDC.clear();
     }
 

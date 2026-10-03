@@ -37,6 +37,8 @@ public class SecurityConfig {
                                                 "/actuator/health",
                                                 "/actuator/info")
                                         .permitAll()
+                                        .requestMatchers("/actuator/prometheus")
+                                        .hasRole("ADMIN")
                                         .requestMatchers(HttpMethod.GET, "/api/v1/certificates/**")
                                         .hasAnyRole("USER", "ADMIN")
                                         .anyRequest()

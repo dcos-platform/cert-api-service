@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 import com.dcos.platform.certapi.domain.CertificateStatus;
 import com.dcos.platform.certapi.domain.RevocationReason;
 import com.dcos.platform.certapi.dto.CertificateCreateRequest;
+import com.dcos.platform.certapi.dto.CertificateResponse;
 import com.dcos.platform.certapi.dto.PageResponse;
 import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.repository.CertificateRepository;
@@ -107,12 +108,17 @@ class CertificateSearchIntegrationTest {
 
         // Search only for active certificates
         Sort sort = Sort.by(Sort.Order.asc("createdAt"));
-        PageResponse<?> result =
+        PageResponse<CertificateResponse> result =
                 service.search(
                         CertificateStatus.ACTIVE, null, null, null, null, null, 0, 100, sort);
 
-        assertThat(result.content()).hasSize(6); // 5 seeded + 1 active created in this test
-        assertThat(result.totalElements()).isGreaterThanOrEqualTo(1);
+        assertThat(result.content()).isNotEmpty();
+        assertThat(result.content())
+                .allSatisfy(
+                        response ->
+                                assertThat(response.status()).isEqualTo(CertificateStatus.ACTIVE));
+        assertThat(result.content())
+                .anyMatch(response -> response.commonName().equals("active-cert"));
     }
 
     @Test
@@ -135,12 +141,12 @@ class CertificateSearchIntegrationTest {
         Sort sort = Sort.by(Sort.Order.asc("createdAt"));
 
         // Search with lowercase
-        PageResponse<?> lowerResult =
+        PageResponse<CertificateResponse> lowerResult =
                 service.search(null, null, cn.toLowerCase(), null, null, null, 0, 100, sort);
         assertThat(lowerResult.content()).isNotEmpty();
 
         // Search with mixed case
-        PageResponse<?> mixedResult =
+        PageResponse<CertificateResponse> mixedResult =
                 service.search(
                         null,
                         null,
@@ -174,17 +180,20 @@ class CertificateSearchIntegrationTest {
         Sort sort = Sort.by(Sort.Order.asc("createdAt"));
 
         // Get first page
-        PageResponse<?> page1 = service.search(null, null, null, null, null, null, 0, 3, sort);
+        PageResponse<CertificateResponse> page1 =
+                service.search(null, null, null, null, null, null, 0, 3, sort);
         assertThat(page1.size()).isEqualTo(3);
         assertThat(page1.first()).isTrue();
 
         // Get second page
-        PageResponse<?> page2 = service.search(null, null, null, null, null, null, 1, 3, sort);
+        PageResponse<CertificateResponse> page2 =
+                service.search(null, null, null, null, null, null, 1, 3, sort);
         assertThat(page2.size()).isEqualTo(3);
         assertThat(page2.first()).isFalse();
 
         // Get beyond end (should return empty)
-        PageResponse<?> beyond = service.search(null, null, null, null, null, null, 100, 3, sort);
+        PageResponse<CertificateResponse> beyond =
+                service.search(null, null, null, null, null, null, 100, 3, sort);
         assertThat(beyond.content()).isEmpty();
     }
 
@@ -217,16 +226,12 @@ class CertificateSearchIntegrationTest {
                 PRINCIPAL);
 
         // Search for certificates expiring in 30 days
-        PageResponse<?> expiring = service.findExpiring(30, 0, 100);
+        PageResponse<CertificateResponse> expiring = service.findExpiring(30, 0, 100);
 
         // Should find at least the 15-day one, but not the 60-day one (it's outside the window)
         assertThat(expiring.content())
                 .isNotEmpty()
-                .anyMatch(
-                        r ->
-                                ((com.dcos.platform.certapi.dto.CertificateResponse) r)
-                                        .commonName()
-                                        .contains("expiring-soon"));
+                .anyMatch(r -> r.commonName().contains("expiring-soon"));
     }
 
     @Test
@@ -254,12 +259,12 @@ class CertificateSearchIntegrationTest {
         }
 
         Sort ascSort = Sort.by(Sort.Order.asc("createdAt"));
-        PageResponse<?> ascResult =
+        PageResponse<CertificateResponse> ascResult =
                 service.search(null, null, null, null, null, null, 0, 100, ascSort);
         assertThat(ascResult.content()).isNotEmpty();
 
         Sort descSort = Sort.by(Sort.Order.desc("createdAt"));
-        PageResponse<?> descResult =
+        PageResponse<CertificateResponse> descResult =
                 service.search(null, null, null, null, null, null, 0, 100, descSort);
         assertThat(descResult.content()).isNotEmpty();
 

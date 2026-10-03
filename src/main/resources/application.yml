@@ -35,6 +35,8 @@ spring:
 
 cert-api:
   expiry-sweep-interval: 300000
+  metrics:
+    refresh-interval: 60000
   outbox:
     relay-interval: 5000
     relay-batch-size: 10
@@ -69,7 +71,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: cert-api-service
 
 logging:
   level:

@@ -9,6 +9,9 @@ spring:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/cert_api_test
     username: ${DB_USER:dcos}
     password: ${DB_PASSWORD:changeme}
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
   flyway:
     # Allow clean operations in tests so we can reset the schema between test runs.
     cleanDisabled: false
@@ -22,6 +25,12 @@ spring:
         # Applies to Boot's auto-configured container factory only. Kept so that any listener
         # added later without a custom factory is also held back.
         auto-startup: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
 
 # Holds the completion listener back in every test context. This is the setting that actually
 # governs it: the listener uses a custom container factory, which Boot's

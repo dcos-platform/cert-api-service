@@ -23,6 +23,7 @@
 hs_err_pid*.log
 hs_err_pid*.jfr
 replay_pid*
+*.stackdump
 
 # Captured test output and build artifacts
 *_output.txt

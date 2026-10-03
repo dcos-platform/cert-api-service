@@ -8,6 +8,7 @@ import com.dcos.platform.certapi.dto.CertificateCreateRequest;
 import com.dcos.platform.certapi.dto.RevocationRequest;
 import com.dcos.platform.certapi.repository.CertificateRepository;
 import com.dcos.platform.certapi.support.RequiresTestDatabase;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
@@ -28,6 +29,8 @@ class CertificateExpirySweepIntegrationTest {
     @Autowired private CertificateRepository repository;
 
     @Autowired private CertificateExpirySweep sweep;
+
+    @Autowired private MeterRegistry meterRegistry;
 
     @MockBean private com.dcos.platform.certapi.event.OutboxEnqueueService outboxEnqueueService;
 
@@ -90,10 +93,31 @@ class CertificateExpirySweepIntegrationTest {
         assertThat(beforeSweep.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
         assertThat(beforeSweep.getExpiresAt()).isBefore(now);
 
+        // T2: Record counter before sweep (per-tag)
+        double countBefore =
+                meterRegistry
+                        .find("cert.sweep.transitions")
+                        .tag("sweep", "expiry")
+                        .counters()
+                        .stream()
+                        .mapToDouble(c -> c.count())
+                        .sum();
+
         sweep.sweep();
 
         var afterSweep = repository.findById(certId).get();
         assertThat(afterSweep.getStatus()).isEqualTo(CertificateStatus.EXPIRED);
+
+        // T2: Verify counter incremented by 1 (delta-based, per-tag)
+        double countAfter =
+                meterRegistry
+                        .find("cert.sweep.transitions")
+                        .tag("sweep", "expiry")
+                        .counters()
+                        .stream()
+                        .mapToDouble(c -> c.count())
+                        .sum();
+        assertThat(countAfter - countBefore).isEqualTo(1.0);
     }
 
     @Test
@@ -158,9 +182,30 @@ class CertificateExpirySweepIntegrationTest {
         assertThat(beforeSweep.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
         assertThat(beforeSweep.getExpiresAt()).isAfter(now);
 
+        // T2: Record counter before sweep (when nothing should move)
+        double countBefore =
+                meterRegistry
+                        .find("cert.sweep.transitions")
+                        .tag("sweep", "expiry")
+                        .counters()
+                        .stream()
+                        .mapToDouble(c -> c.count())
+                        .sum();
+
         sweep.sweep();
 
         var afterSweep = repository.findById(certId).get();
         assertThat(afterSweep.getStatus()).isEqualTo(CertificateStatus.ACTIVE);
+
+        // T2: Verify counter stayed the same (zero transitions)
+        double countAfter =
+                meterRegistry
+                        .find("cert.sweep.transitions")
+                        .tag("sweep", "expiry")
+                        .counters()
+                        .stream()
+                        .mapToDouble(c -> c.count())
+                        .sum();
+        assertThat(countAfter - countBefore).isEqualTo(0.0);
     }
 }
