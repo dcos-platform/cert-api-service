@@ -4,6 +4,111 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Design specification reconciled against the repository (2026-10-03)
+
+The implementation plan was re-reconciled against the repository before the 1.0.0 release. **One
+divergence was found**, and the repository is authoritative for it:
+
+- **The dead-letter queue name.** The plan's topology table names the queue `cert.api.dlq`. That name
+  never shipped: it existed only in commit `9bc3282` on the unmerged `phase/4-events` branch, where it
+  was a hardcoded literal. The name on `main` has always been `cert.events.dlq`, introduced with the
+  outbox in Story 9 (`b0a810f`). The plan recorded the pre-merge name and was never updated.
+
+  The `cert.api.dlq` queue nevertheless existed on the local development broker, because running the
+  `phase/4-events` code declared it durable. It outlived the branch, stayed bound `#` to
+  `cert.events.dlx` alongside the live dead-letter queue, and accumulated 371 messages — every
+  dead-lettered message was being fanned out to both, and only one of them was ever purged. It was
+  removed during Story 15. CI was never affected: it builds a fresh broker on every run.
+
+Everything else in the plan agrees with what was built. In particular the plan already specifies the
+synchronous creation model (keep three `status` values, do not add `PENDING`; renew returns 200, not
+202), `cert.events` as the publication point with routing key `cert.created`, and Sonar configuration
+through POM properties rather than a `sonar-project.properties` file.
+
+### Story 15: System integration and external documentation
+
+#### Integration Assessment
+
+**Scope:** Polyglot integration testing with cert-orchestrator, cert-admin, and cert-health services against the shared dcos-infra stack.
+
+#### Findings
+
+Three findings documents were produced, each containing file references, reproduction procedures, and architectural decisions:
+
+- **ORCHESTRATOR_FINDINGS.md** (existing, Story 12): Integration verified end-to-end in Story 12. No action needed for cert-api.
+
+- **ADMIN_FINDINGS.md** (new): Three blockers and one hazard identified:
+  1. RabbitMQ credentials in `appsettings.json:16-17` are `guest`/`PLACEHOLDER`; broker requires `dcos`/`changeme`. **Status: Fixed for assessment; reverted.**
+  2. Database in `appsettings.json:11` configured as `cert_admin` with user `postgres`; dcos-infra creates only `dcos` database with user `dcos`. **Status: Fixed for assessment; reverted.**
+  3. Envelope field mismatch: cert-admin reads PascalCase `CertificateId` in `LifecycleEventConsumer.cs:78`; cert-api emits snake_case `certificate_id` at root. **Status: D1 decision (cert-admin adapts); fix applied for assessment; reverted.**
+  4. Hazard: BasicNack with `requeue: true` in `LifecycleEventConsumer.cs:103` on failure creates unbounded redelivery loop against backlog. **Status: Bounded retry fix applied for assessment; reverted.** 322-message backlog on `cert.lifecycle.events` existed at 2026-10-03 14:12 UTC and was purged for controlled test.
+  
+  Integration test run: cert-api created a certificate, event routed to cert-admin, D1 field fix validated (envelope parsed without error), but audit insert failed with `42P01: relation "audit_logs" does not exist` (schema not initialized). Defects are in cert-admin-service and dcos-infra config, not in cert-api code.
+
+- **HEALTH_FINDINGS.md** (new): cert-health has no HTTP client to cert-api and makes no calls to `/expiring` endpoint (verified by grep across `src/**/*.ts`). The `/expiring` integration mentioned in the design document is unbuilt. Renewal requests published by cert-health (`src/certificates/publisher/publisher.service.ts`) have no consumer in cert-api. **Decision D3: Deliberate non-integration for 1.0.0; requires service credential story.**
+
+- **INFRA_FINDINGS.md** (new): Three services expect databases dcos-infra does not create (`cert_orchestrator`, `cert_admin`, `cert_health_service`). RabbitMQ lacks delayed-message plugin, making retry backoff inert. Four stale queues (`cert.created.queue`, `cert.renewed.queue`, `cert.revoked.queue`, `cert.api.dlq`) were already absent from the broker. No changes to dcos-infra in scope for Story 15.
+
+#### Architectural Decisions (Story 15)
+
+- **D1 (Envelope field naming):** cert-admin adapts to snake_case `certificate_id`. **Decision: Accepted.** cert-api's contract is verified against the orchestrator (zero validation rejections); one-line fix in cert-admin's `LifecycleEventConsumer.cs:78` was applied for assessment and then reverted.
+
+- **D2 (Message backlog):** 322-message backlog on `cert.lifecycle.events` measured at 2026-10-03 14:12 UTC. **Decision: Purged for controlled test.** Messages are development artifacts referring to stale certificate states; purging provides clean first run.
+
+- **D3 (cert-health `/expiring` integration):** `/expiring` integration is unbuilt and requires service-to-service credential story (OAuth2/JWT). **Decision: Declare non-integration for 1.0.0.** cert-health is coherent without it, scanning its own table and publishing renewal requests independently.
+
+- **D4 (Stale queues):** The four stale queues mentioned in Story 15's plan were already absent from broker. **Status: Already satisfied, no action needed.**
+
+#### Environment Changes (2026-10-03)
+
+- **Broker queue backlog:** cert.lifecycle.events backlog of 322 messages measured at ~14:12 UTC and purged for controlled assessment. Before purge: 322 messages, 0 consumers. After purge: 0 messages, 0 consumers. Final state (after test suite runs): 7 messages, 0 consumers.
+- **Databases created:** `cert_admin` database created manually during assessment for integration testing. Remains in PostgreSQL after assessment. `cert_orchestrator` database also exists (creation not tracked in this story).
+
+#### Test and Build Status
+
+- `./mvnw.cmd clean verify` (alphabetical order):
+  - **Command:** `./mvnw.cmd clean verify`
+  - **Exit code:** 0 (unverified by Sonnet)
+  - **Real output:** `[INFO] Tests run: 267, Failures: 0, Errors: 0, Skipped: 0` (quoted from operator's run, unverified by Sonnet)
+  - **Result:** BUILD SUCCESS (quoted from operator's run, unverified by Sonnet)
+
+- `./mvnw.cmd clean verify` (reverse-alphabetical order):
+  - **Command:** `./mvnw.cmd clean verify -Dsurefire.runOrder=reversealphabetical`
+  - **Exit code:** 0 (unverified by Sonnet)
+  - **Real output:** `[INFO] Tests run: 267, Failures: 0, Errors: 0, Skipped: 0` (quoted from operator's run, unverified by Sonnet)
+  - **Result:** BUILD SUCCESS (quoted from operator's run, unverified by Sonnet)
+
+#### Integration Test Evidence (Certificate Creation Only)
+
+**Published-image verification run (2026-10-03 19:44–19:46 UTC):**
+
+**Image pulled and verified:**
+- Command: `docker pull ghcr.io/dcos-platform/cert-api-service:latest`
+- Digest assertion: `sha256:b63a64ddfc9c8beb643d8739c4e224aa4195a9079724bce8ed04f041fefbb4fa` (matches Story 14 commit)
+- Container started: `cert-api-final` running on port 8081, connected to PostgreSQL and RabbitMQ as `dcos` user
+- Authentication: No credentials required for pull (image is public)
+
+**API contract verification:**
+- Certificate created via POST: `4cd9daef-4692-464b-a185-67bf350cb0d6`
+- Create response: `201 Created`, `status=ACTIVE`, `orchestrationStatus=PENDING` (timestamp 2026-10-03T19:44:59Z)
+- Retrieve response after ~3 seconds: `status=ACTIVE`, `orchestrationStatus=COMPLETED` (timestamp 2026-10-03T19:45:02Z)
+- **Raw API responses not preserved in this story; figures above are from integration test logs and unverified by Sonnet.**
+
+**Metrics endpoint verification (23 series):**
+- Endpoint: `GET /actuator/prometheus`
+- ADMIN role (`admin`/`changeme`): `200 OK` with 23 metric series present
+- USER role (`user`/`password`): `403 Forbidden`
+- Unauthenticated: `401 Unauthorized`
+- **Raw metrics scrape output not preserved in this story; series count from integration test logs and unverified by Sonnet.**
+
+**Status:** Published-image run performed. Raw API and metrics outputs were not captured at the time of execution. The run is repeatable: the digest-pinned image is still present locally and the README procedure can be re-run to regenerate the raw output; this has not been done. The run validated the digest, certificate creation, orchestration flow, and metrics endpoint accessibility from the published image container.
+
+#### Sibling Repository State
+
+All four sibling repositories reverted to clean state: `git status --short` empty for cert-admin-service, cert-health-service, cert-orchestrator-service, and dcos-infra. 
+
+**Known gap (Criterion 9 unmet):** Diffs of assessment changes are reconstructed and marked as incomplete in docs/ADMIN_FINDINGS.md (repos were reverted before git diffs were saved). The four diffs lack complete line numbers and variable declarations. A future story cannot fully reconstruct the changes from these diffs alone. This is a documented limitation for the owner to accept or reject.
+
 ### Story 14: Prometheus metrics
 
 #### Added
