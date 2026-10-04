@@ -216,6 +216,26 @@ Stories 1–14 are complete. The case-insensitive status comparison fix (Story 1
 - **D3 (cert-health `/expiring` integration):** Declare non-integration for 1.0.0. Requires service credential story not yet planned. cert-health is coherent without it. Recommendation: defer to future story when OAuth2/JWT is available.
 - **D4 (Stale queues):** Already satisfied. The four stale queues mentioned in Story 15's assessment are gone from the broker.
 
+## Release & Versioning (Story 16)
+
+**Current version:** 1.0.0 (in preparation; tag and verification pending)
+
+**Version scope:** `cert-api-service` 1.0.0 marks the first release of this service. The version applies to this repository only; it does **not** imply the platform (DCOS) is at 1.0.0.
+
+**Release criteria (being met in Story 16):**
+- Version number bumped in pom.xml
+- CI workflow supports building on release tags (`cert-api-X.Y.Z` pattern)
+- Docker image labels version with `org.opencontainers.image.version`
+- Service verified consumable against the orchestrator from the published image `ghcr.io/dcos-platform/cert-api-service:1.0.0`
+
+**Release tag convention:** Annotated tags follow pattern `cert-api-X.Y.Z` (e.g., `cert-api-1.0.0`). CI publishes images on:
+- Main branch merges: `ghcr.io/dcos-platform/cert-api-service:<commit SHA>`
+- Release tags: `ghcr.io/dcos-platform/cert-api-service:X.Y.Z` and `:latest`
+
+**Published image location:** `ghcr.io/dcos-platform/cert-api-service`
+
+**Documentation and traceability:** CHANGELOG.md records release dates and contents. This context.md is updated with each release. Detailed verification procedures are in README.md § Verification with the Published Container Image.
+
 ## Intended Use of This Document
 
 - AI models should read this file before performing reasoning or implementation tasks.

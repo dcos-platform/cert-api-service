@@ -46,8 +46,8 @@ cert-api:
     sweep-interval-ms: 60000
   rabbitmq:
     exchange: ${RABBITMQ_EXCHANGE:cert.events}
-    dlx: ${RABBITMQ_DLX:cert.events.dlx}
-    dlq: ${RABBITMQ_DLQ:cert.events.dlq}
+    dlx: ${RABBITMQ_DLX:cert.api.dlx}
+    dlq: ${RABBITMQ_DLQ:cert.api.dlq}
     orchestrator-queue: ${RABBITMQ_ORCHESTRATOR_QUEUE:certificate.lifecycle.events}
     admin-queue: ${RABBITMQ_ADMIN_QUEUE:cert.lifecycle.events}
     completions-queue: ${RABBITMQ_COMPLETIONS_QUEUE:certificate.lifecycle.completions}

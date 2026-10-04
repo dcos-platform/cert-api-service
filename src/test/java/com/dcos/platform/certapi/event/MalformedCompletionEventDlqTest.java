@@ -30,7 +30,7 @@ class MalformedCompletionEventDlqTest {
     @Autowired private RabbitListenerEndpointRegistry listenerRegistry;
 
     private static final String COMPLETIONS_QUEUE = "certificate.lifecycle.completions";
-    private static final String DLQ = "cert.events.dlq";
+    private static final String DLQ = "cert.api.dlq";
 
     /** Purges only while no consumer is attached; see {@link ListenerTestSupport}. */
     @BeforeEach
