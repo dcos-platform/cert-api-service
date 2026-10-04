@@ -187,16 +187,16 @@ This procedure runs cert-api together with the Python orchestrator (`cert-orches
 #### 1. Pull the published image
 
 ```bash
-docker pull ghcr.io/dcos-platform/cert-api-service:latest
+docker pull ghcr.io/dcos-platform/cert-api-service:1.0.0
 ```
 
-Record the image digest reported by Docker. The expected digest for the Story 14 commit is:
+Record the image digest reported by Docker. The expected digest for the 1.0.0 release will be recorded in the release notes during Phase C verification.
+
+For 1.0.0 (to be filled during Phase C):
 
 ```
-Digest: sha256:b63a64ddfc9c8beb643d8739c4e224aa4195a9079724bce8ed04f041fefbb4fa
+Digest: sha256:[to be filled and verified during Phase C]
 ```
-
-If the digest differs from the expected value, stop and report—the image may have been republished or the registry URL is incorrect.
 
 #### 2. Verify no authentication is required
 
@@ -213,7 +213,7 @@ docker run --rm \
   -e POSTGRES_HOST=postgres \
   -e RABBITMQ_HOST=rabbitmq \
   -p 8081:8081 \
-  ghcr.io/dcos-platform/cert-api-service:latest
+  ghcr.io/dcos-platform/cert-api-service:1.0.0
 ```
 
 #### 4. Create a test certificate and observe the state transition
@@ -404,13 +404,18 @@ The service expects the broker to have:
 
 **Exchanges**
 - `cert.events` (topic exchange) — Receives lifecycle events (created, renewed, revoked, expired)
-- `cert.events.dlx` (direct exchange) — Dead-letter exchange for failed messages
+- `cert.api.dlx` (topic exchange) — Dead-letter exchange for failed messages
 
 **Queues**
 - `certificate.lifecycle.events` — Consumed by the orchestrator (durable, bound to cert.events with routing key `cert.#`)
 - `cert.lifecycle.events` — Consumed by cert-admin service (durable)
 - `certificate.lifecycle.completions` — Received by CompletionListener from the orchestrator (durable)
-- `cert.events.dlq` (optional) — Dead-letter queue for inspection of failed message retries
+- `cert.api.dlq` — Dead-letter queue for inspection of failed message retries
+
+Dead-lettering is performed by the application, not the broker: a `RepublishMessageRecoverer`
+republishes to `cert.api.dlx` once the listener's retry policy is exhausted. No queue carries an
+`x-dead-letter-exchange` argument, because the orchestrator declares the shared queues with no
+arguments and a mismatched declaration would fail both services' startup.
 
 The topology is not created by the service; it must exist on the broker before the service starts. Use RabbitMQ's management API or UI to create it, or ensure your broker container image includes it.
 
@@ -561,7 +566,7 @@ flowchart LR
             QOrch["certificate.lifecycle.events"]
             QAdmin["cert.lifecycle.events"]
             QComp["certificate.lifecycle.completions"]
-            DLX{{"cert.events.dlx"}}
+            DLX{{"cert.api.dlx"}}
         end
     end
 
@@ -744,22 +749,28 @@ SERVER_PORT=8081 curl -s -u admin:changeme http://localhost:${SERVER_PORT}/actua
 
 ## Building and Deploying
 
-### Docker Image
+### Using the Published Image
+
+CI publishes container images to `ghcr.io/dcos-platform/cert-api-service` automatically:
+- On merge to main: tagged with the commit SHA
+- On release tag: tagged with the version (e.g., `1.0.0`) and `:latest`
+
+To use the service in a deployment:
 
 ```bash
-docker build -t cert-api-service .
+docker pull ghcr.io/dcos-platform/cert-api-service:1.0.0
+docker run --rm -e SERVER_PORT=8080 ghcr.io/dcos-platform/cert-api-service:1.0.0
 ```
 
-The multi-stage Dockerfile compiles with JDK 21 and runs with JRE 21, producing a minimal production image.
+### Local Development Build
 
-### Pushing to a Registry
+For local development only, build from source:
 
 ```bash
-docker tag cert-api-service:latest ghcr.io/dcos-platform/cert-api-service:latest
-docker push ghcr.io/dcos-platform/cert-api-service:latest
+docker build -t cert-api-service:dev .
 ```
 
-(Adjust the registry URL as needed.)
+The multi-stage Dockerfile compiles with JDK 21 and runs with JRE 21, producing a minimal image. This is for development testing; deployed instances use the published images from the registry.
 
 ## Quality Standards
 

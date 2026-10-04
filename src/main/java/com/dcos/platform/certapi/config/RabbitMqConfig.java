@@ -41,10 +41,10 @@ public class RabbitMqConfig {
     @Value("${cert-api.rabbitmq.exchange:cert.events}")
     private String exchange;
 
-    @Value("${cert-api.rabbitmq.dlx:cert.events.dlx}")
+    @Value("${cert-api.rabbitmq.dlx:cert.api.dlx}")
     private String dlx;
 
-    @Value("${cert-api.rabbitmq.dlq:cert.events.dlq}")
+    @Value("${cert-api.rabbitmq.dlq:cert.api.dlq}")
     private String dlq;
 
     @Value("${cert-api.rabbitmq.orchestrator-queue:certificate.lifecycle.events}")

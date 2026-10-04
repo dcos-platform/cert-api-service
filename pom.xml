@@ -14,7 +14,7 @@
 
     <groupId>com.dcos.platform</groupId>
     <artifactId>cert-api-service</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>1.0.0</version>
     <name>cert-api-service</name>
     <description>Domain-neutral certificate lifecycle REST API demo</description>
 

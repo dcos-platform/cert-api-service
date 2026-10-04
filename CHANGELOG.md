@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+(empty — post-1.0.0 work goes here)
+
+## [1.0.0] — TBD
+
+> The 1.0.0 tag date will be set from the tag creation date during Phase C verification.
+
+### Release 1.0.0
+
+**cert-api-service 1.0.0** marks the first release of this service. The version number applies to this repository only; it does not imply the platform (DCOS) is at 1.0.0. 
+
+**Verification:** The release will be verified consumable against the orchestrator from the published container image `ghcr.io/dcos-platform/cert-api-service:1.0.0` (see Phase C verification details below, to be filled after tagging).
+
+### Story 16 pre-task: Dead-letter topology renamed to cert.api.*
+
+The dead-letter exchange and queue were renamed from `cert.events.dlx`/`cert.events.dlq` to
+`cert.api.dlx`/`cert.api.dlq` to match the specification in IMPLEMENTATION_PLAN.md §594 and
+establish the platform convention for cert-admin and cert-health services. The topology is
+application-managed via `RepublishMessageRecoverer`, not broker-managed; no queue carries an
+`x-dead-letter-exchange` argument, because the orchestrator declares shared queues with no arguments.
+Environment variable overrides (`RABBITMQ_DLX` / `RABBITMQ_DLQ`) are respected and take precedence
+over the new defaults.
+
 ### Design specification reconciled against the repository (2026-10-03)
 
 The implementation plan was re-reconciled against the repository before the 1.0.0 release. **One
@@ -25,7 +47,7 @@ synchronous creation model (keep three `status` values, do not add `PENDING`; re
 202), `cert.events` as the publication point with routing key `cert.created`, and Sonar configuration
 through POM properties rather than a `sonar-project.properties` file.
 
-### Story 15: System integration and external documentation
+### Story 15: System integration and external documentation — merged 2026-10-03
 
 #### Integration Assessment
 
@@ -109,7 +131,7 @@ All four sibling repositories reverted to clean state: `git status --short` empt
 
 **Known gap (Criterion 9 unmet):** Diffs of assessment changes are reconstructed and marked as incomplete in docs/ADMIN_FINDINGS.md (repos were reverted before git diffs were saved). The four diffs lack complete line numbers and variable declarations. A future story cannot fully reconstruct the changes from these diffs alone. This is a documented limitation for the owner to accept or reject.
 
-### Story 14: Prometheus metrics
+### Story 14: Prometheus metrics — merged 2026-10-03
 
 #### Added
 
@@ -212,7 +234,7 @@ All four sibling repositories reverted to clean state: `git status --short` empt
 - OutboxIntegrationTest line 46: `outboxRepository.deleteAll()` (@BeforeEach)
 - EventHistoryEndpointTest line 49: `outboxRepository.deleteAll()` (@BeforeEach)
 
-### Story 13: Consolidation and polish
+### Story 13: Consolidation and polish — merged 2026-09-30
 
 #### Fixed
 
@@ -249,7 +271,7 @@ All four sibling repositories reverted to clean state: `git status --short` empt
 
 - **Gitignore improvements**: Added patterns for JVM crash dumps (`hs_err_pid*.log` variants) and captured output files (`*_output.txt`), adopting a naming convention for test captures that the ignore file matches.
 
-### Story 12: End-to-end verification against the orchestrator
+### Story 12: End-to-end verification against the orchestrator — merged 2026-09-29
 
 #### Fixed
 
@@ -274,7 +296,7 @@ All four sibling repositories reverted to clean state: `git status --short` empt
 - Status comparison is case-insensitive; tests reflect uppercase contract from real orchestrator
 - Cross-service integration verified by a live run rather than by contract assertion alone: a certificate was created as `ACTIVE`/`PENDING` and about twelve seconds later read `ACTIVE`/`COMPLETED` with no last error. Every completion arrived with `status` in uppercase, confirming the case fix was necessary. `status` never changed, so the ownership boundary held across services
 
-### Story 11: Structured logging and correlation
+### Story 11: Structured logging and correlation — merged 2026-09-29
 
 #### Added
 
@@ -308,7 +330,7 @@ Both the filter and completion listener clear MDC in finally blocks, even when h
 
 The logstash encoder and JSON format are active only under the `prod` profile, not driven by environment variables or complex conditional logic. This keeps the default behavior (readable local logs) and the production behavior (structured JSON) clearly separated and testable.
 
-### Story 10: Completion event consumption and orchestration timeout handling
+### Story 10: Completion event consumption and orchestration timeout handling — merged 2026-09-28
 
 #### Added
 
@@ -341,7 +363,7 @@ When a certificate ID is not found in the database, the message is acknowledged 
 
 Same as Story 9: the retry template uses a simple attempt ceiling (default 3) rather than exponential backoff. It is simpler and works well for transient failures. The retry interceptor is stateful and requires a message ID to correlate attempts; the orchestrator's completion messages do not carry one, so retry behavior depends on Spring AMQP's default message-ID field handling.
 
-### Story 9: Lifecycle event publication
+### Story 9: Lifecycle event publication — merged 2026-09-27
 
 #### Added
 
@@ -394,7 +416,7 @@ Events are not persisted to the outbox as a happy-path optimization; they are al
 
 The relay has a simple attempt ceiling (default 3) rather than exponential backoff. It is simpler, works well for transient failures, and avoids the delayed-message plugin which is not available in the infrastructure image.
 
-### Story 8: Certificate lifecycle transitions
+### Story 8: Certificate lifecycle transitions — merged 2026-09-27
 
 #### Added
 
@@ -422,7 +444,7 @@ The relay has a simple attempt ceiling (default 3) rather than exponential backo
 
 - **CertificateRequest DTO**: The legacy POJO is no longer used. `RenewalRequest` and `RevocationRequest` replace it, each with a narrower, clearer contract.
 
-### Story 7: Certificate search and pagination
+### Story 7: Certificate search and pagination — merged 2026-09-27
 
 #### Added
 
@@ -447,7 +469,7 @@ Each `CertificateSpecifications` factory method returns null when its filter is 
 
 `daysUntilExpiry` is not persisted; it is computed at mapping time from `expiresAt` and the current date. This avoids stale values in responses and keeps the entity lightweight while giving clients the information they need for expiry UI presentation.
 
-### Story 6: Certificate creation
+### Story 6: Certificate creation — merged 2026-09-27
 
 #### Fixed
 
@@ -498,7 +520,7 @@ Tests may insert, update, and delete rows. Creating or dropping tables, indexes,
 
 `CertificateCreateRequest` is authored as a record per code conventions.
 
-### Story 5: Persistent schema and expanded certificate model
+### Story 5: Persistent schema and expanded certificate model — merged 2026-09-26
 
 #### Added
 
@@ -531,7 +553,7 @@ The first migration makes three columns nullable (serial_number, common_name, re
 
 This boundary allows the current service code to create and revoke certificates immediately, with both operations succeeding against a real database, while the schema evolves alongside the feature implementations that complete them.
 
-### Story 4: Container image build and publish
+### Story 4: Container image build and publish — merged 2026-09-25
 
 #### Added
 
@@ -552,7 +574,7 @@ This boundary allows the current service code to create and revoke certificates 
 - **Registry Login Gating**: Registry login only runs on trunk pushes to main, avoiding authentication overhead and token use on pull requests
 - **Third-party Action Pinning**: Docker actions pinned to immutable commit hashes instead of mutable version tags (setup-buildx-action to 8d2750c68a, login-action to c94ce9fb46, build-push-action to ca052bb54a) to prevent supply-chain attacks from compromised tags
 
-### Story 3: Coverage and SonarQube quality gate
+### Story 3: Coverage and SonarQube quality gate — merged 2026-09-05
 
 #### Added
 
@@ -567,7 +589,7 @@ This boundary allows the current service code to create and revoke certificates 
 - **GitHub Actions Workflow**: CI pipeline now includes dedicated analysis step with environment-based SONAR_TOKEN secret injection; checkout performs full clone for accurate SonarQube analysis
 - **POM Configuration**: Added sonar.projectKey, sonar.organization, sonar.host.url, and sonar.coverage.jacoco.xmlReportPaths properties for centralized scanner configuration
 
-### Story 2: Continuous integration — build and test
+### Story 2: Continuous integration — build and test — merged 2026-09-05
 
 #### Added
 
@@ -580,9 +602,7 @@ This boundary allows the current service code to create and revoke certificates 
 - **Build Automation**: The build now runs in the GitHub Actions pipeline on every PR and push to main, replacing manual self-assessment for determining story completion
 - **Concurrency**: Workflow uses concurrency groups to cancel superseded runs, preventing redundant executions when PRs are updated frequently
 
-## [0.0.1] - 2026-08-30
-
-### Story 1: Verified baseline and build toolchain
+### Story 1: Verified baseline and build toolchain — merged 2026-09-05
 
 #### Changed
 

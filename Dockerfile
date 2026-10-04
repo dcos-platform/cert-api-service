@@ -10,6 +10,7 @@ RUN ./mvnw clean package -DskipTests -q
 # Runtime stage
 FROM eclipse-temurin:21-jre
 ARG BUILD_COMMIT_SHA
+ARG BUILD_VERSION
 RUN groupadd -r app && useradd -r -g app app
 WORKDIR /app
 COPY --from=builder /build/target/*.jar app.jar
@@ -19,3 +20,4 @@ EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
 LABEL org.opencontainers.image.source="https://github.com/dcos-platform/cert-api-service"
 LABEL org.opencontainers.image.revision="${BUILD_COMMIT_SHA}"
+LABEL org.opencontainers.image.version="${BUILD_VERSION}"

@@ -57,7 +57,7 @@ class CompletionListenerIntegrationTest {
     private static final Duration DIAGNOSTIC_POLL_INTERVAL = Duration.ofMillis(500);
 
     private static final String COMPLETIONS_QUEUE = "certificate.lifecycle.completions";
-    private static final String DLQ = "cert.events.dlq";
+    private static final String DLQ = "cert.api.dlq";
     private static final String NONNATIVE_SUBJECT = "CN=Über Company,O=DCOS";
 
     /**
