@@ -190,12 +190,20 @@ This procedure runs cert-api together with the Python orchestrator (`cert-orches
 docker pull ghcr.io/dcos-platform/cert-api-service:1.0.0
 ```
 
-Record the image digest reported by Docker. The expected digest for the 1.0.0 release will be recorded in the release notes during Phase C verification.
-
-For 1.0.0 (to be filled during Phase C):
+Record the image digest reported by Docker and compare it against the release. For 1.0.0:
 
 ```
-Digest: sha256:[to be filled and verified during Phase C]
+Digest: sha256:23cc42174ad7d00dc759cbc02ce26ff4b1bef75c0acdb5cd66d08439331313d9
+```
+
+`:1.0.0`, `:latest` and the tagged commit `6b8e73a976e519f2749e0ead62210401865f1704` all resolve to
+that digest. If what you pull differs, the tag has been republished — stop and investigate rather than
+continuing, because the rest of this procedure would then be measuring a different artefact.
+
+To pin the exact artefact rather than trusting a mutable tag, pull by digest:
+
+```bash
+docker pull ghcr.io/dcos-platform/cert-api-service@sha256:23cc42174ad7d00dc759cbc02ce26ff4b1bef75c0acdb5cd66d08439331313d9
 ```
 
 #### 2. Verify no authentication is required
