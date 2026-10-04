@@ -6,15 +6,34 @@ All notable changes to this project will be documented in this file.
 
 (empty — post-1.0.0 work goes here)
 
-## [1.0.0] — TBD
-
-> The 1.0.0 tag date will be set from the tag creation date during Phase C verification.
+## [1.0.0] — 2026-10-03
 
 ### Release 1.0.0
 
-**cert-api-service 1.0.0** marks the first release of this service. The version number applies to this repository only; it does not imply the platform (DCOS) is at 1.0.0. 
+**cert-api-service 1.0.0** marks the first release of this service. The version number applies to this
+repository only; it does not imply the platform (DCOS) is at 1.0.0 — the sibling services are at
+earlier stages and are versioned separately.
 
-**Verification:** The release will be verified consumable against the orchestrator from the published container image `ghcr.io/dcos-platform/cert-api-service:1.0.0` (see Phase C verification details below, to be filled after tagging).
+**Artefact.** Tag `cert-api-1.0.0` → commit `6b8e73a976e519f2749e0ead62210401865f1704` → image:
+
+```
+ghcr.io/dcos-platform/cert-api-service:1.0.0
+sha256:23cc42174ad7d00dc759cbc02ce26ff4b1bef75c0acdb5cd66d08439331313d9
+```
+
+`:1.0.0`, `:latest` and the commit tag all resolve to that one digest.
+
+**Verified at release**, against the published image pulled anonymously by digest — not a local build:
+
+- Certificate created `201` as `ACTIVE`/`PENDING` and reached `ACTIVE`/`COMPLETED` through the live
+  orchestrator within ~2 seconds, with `status` never changing — so the ownership boundary between the
+  two axes held across services.
+- `/actuator/prometheus`: 23 `cert_` series across 8 metric names, every line tagged
+  `application="cert-api-service"`, no high-cardinality labels. `401` unauthenticated, `403` as USER,
+  `200` as ADMIN. `/actuator/health` public and `200`.
+- Image labels report `org.opencontainers.image.version=1.0.0` and `.revision` equal to the tagged
+  commit.
+- 267 tests pass in both forward and reverse class order; 97.46% line coverage.
 
 ### Story 16 pre-task: Dead-letter topology renamed to cert.api.*
 
